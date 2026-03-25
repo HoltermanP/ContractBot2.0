@@ -3,10 +3,10 @@ import { contractDocuments, contracts } from '@/lib/db/schema'
 import { eq, and, asc, desc } from 'drizzle-orm'
 import { parseDocument } from '@/lib/parse-document'
 import { getEmbedding } from '@/lib/openai'
+import { downloadFileToBuffer } from '@/lib/blob-fetch'
 
 export async function parseDocumentFromStoredFile(doc: { fileUrl: string; fileType: string }): Promise<string> {
-  const res = await fetch(doc.fileUrl)
-  const buf = Buffer.from(await res.arrayBuffer())
+  const buf = await downloadFileToBuffer(doc.fileUrl)
   return parseDocument(buf, doc.fileType)
 }
 

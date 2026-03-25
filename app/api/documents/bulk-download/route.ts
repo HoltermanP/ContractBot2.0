@@ -5,6 +5,7 @@ import { contractDocuments, contracts } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import JSZip from 'jszip'
 import { canBulkDownloadDocuments } from '@/lib/permissions'
+import { downloadFileToBuffer } from '@/lib/blob-fetch'
 
 export async function GET(req: NextRequest) {
   try {
@@ -27,10 +28,11 @@ export async function GET(req: NextRequest) {
     const zip = new JSZip()
 
     for (const doc of docs) {
-      const res = await fetch(doc.fileUrl)
-      if (res.ok) {
-        const buf = await res.arrayBuffer()
+      try {
+        const buf = await downloadFileToBuffer(doc.fileUrl)
         zip.file(`v${doc.versionNumber}-${doc.filename}`, buf)
+      } catch {
+        // skip unreadable docs
       }
     }
 

@@ -1,6 +1,7 @@
 import { db, contracts, contractDocuments } from '@/lib/db'
 import { eq, and, inArray, desc } from 'drizzle-orm'
 import { parseDocument } from '@/lib/parse-document'
+import { downloadFileToBuffer } from '@/lib/blob-fetch'
 
 const MAX_DOC_BYTES = 20 * 1024 * 1024
 const FETCH_TIMEOUT_MS = 90_000
@@ -29,9 +30,9 @@ export async function fetchDocumentPlainText(fileUrl: string, fileType: string, 
   const ac = new AbortController()
   const t = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS)
   try {
-    const res = await fetch(fileUrl, { signal: ac.signal })
-    if (!res.ok) throw new Error(`Download mislukt (${res.status})`)
-    const buf = Buffer.from(await res.arrayBuffer())
+    // Note: `downloadFileToBuffer` uses the Blob SDK for private stores.
+    // AbortController isn't wired through to Blob SDK yet; we keep the timeout for fetch fallback.
+    const buf = await downloadFileToBuffer(fileUrl)
     if (buf.length > MAX_DOC_BYTES) throw new Error('Bestand is te groot om te verwerken')
     const mime = mimeForParse(fileType, filename)
     return await parseDocument(buf, mime)
