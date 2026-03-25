@@ -20,6 +20,7 @@ export function ContractDocuments({ contract, user }: { contract: any; user: any
   const [uploading, setUploading] = useState(false)
   const [uploadKind, setUploadKind] = useState<'hoofdcontract' | 'addendum'>('hoofdcontract')
   const fileRef = useRef<HTMLInputElement>(null)
+  const MAX_UPLOAD_SIZE_BYTES = 4 * 1024 * 1024
 
   const canUpload = canMutateContractData(user.role)
   const canZip = canBulkDownloadDocuments(user.role)
@@ -30,12 +31,27 @@ export function ContractDocuments({ contract, user }: { contract: any; user: any
     setUploading(true)
     try {
       for (const file of Array.from(files)) {
+        if (file.size > MAX_UPLOAD_SIZE_BYTES) {
+          throw new Error(
+            `Bestand "${file.name}" is te groot (${(file.size / 1024 / 1024).toFixed(1)} MB). Op Vercel via deze route is max ~4 MB.`
+          )
+        }
+
         const fd = new FormData()
         fd.append('file', file)
         fd.append('contractId', contract.id)
         fd.append('documentKind', uploadKind)
         const res = await fetch('/api/documents/upload', { method: 'POST', body: fd })
-        if (!res.ok) throw new Error('Upload mislukt')
+        if (!res.ok) {
+          let message = 'Upload mislukt'
+          try {
+            const json = await res.json()
+            if (json?.error && typeof json.error === 'string') message = json.error
+          } catch {
+            // ignore JSON parse errors and fall back to generic message
+          }
+          throw new Error(message)
+        }
       }
       toast({ title: 'Document(en) geüpload', description: 'AI-extractie wordt op de achtergrond uitgevoerd.' })
       router.refresh()

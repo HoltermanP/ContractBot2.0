@@ -14,14 +14,27 @@ import {
   refreshContractContentEmbedding,
 } from '@/lib/contract-corpus'
 
+export const runtime = 'nodejs'
+
 export async function POST(req: NextRequest) {
   try {
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      return NextResponse.json(
+        {
+          error:
+            'Vercel Blob is niet geconfigureerd. Zet BLOB_READ_WRITE_TOKEN als environment variable (Preview + Production) in Vercel.',
+        },
+        { status: 500 }
+      )
+    }
+
     const user = await getOrCreateUser()
     if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
     if (!canMutateContractData(user.role)) return NextResponse.json({ error: 'Geen rechten' }, { status: 403 })
 
     const formData = await req.formData()
-    const file = formData.get('file') as File | null
+    const fileEntry = formData.get('file')
+    const file = fileEntry instanceof File ? fileEntry : null
     const contractId = formData.get('contractId') as string | null
     const documentKindRaw = formData.get('documentKind') as string | null
     const documentKind = documentKindRaw === 'addendum' ? 'addendum' : 'hoofdcontract'
@@ -47,11 +60,24 @@ export async function POST(req: NextRequest) {
 
     const newVersion = await nextDocumentVersionNumber(contractId)
 
-    const buffer = Buffer.from(await file.arrayBuffer())
-    const blob = await put(`contracts/${contractId}/${Date.now()}-${file.name}`, buffer, {
-      access: 'public',
-      contentType: file.type,
-    })
+    if (file.size <= 0) {
+      return NextResponse.json({ error: 'Leeg bestand kan niet geüpload worden' }, { status: 400 })
+    }
+
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    const uploadBody = new Blob([bytes], { type: file.type || 'application/octet-stream' })
+    const blobPath = `contracts/${contractId}/${Date.now()}-${file.name}`
+    let blob: Awaited<ReturnType<typeof put>>
+    try {
+      blob = await put(blobPath, uploadBody, {
+        access: 'public',
+        contentType: file.type || 'application/octet-stream',
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+      })
+    } catch (err: any) {
+      const message = err?.message || 'Blob upload mislukt'
+      throw new Error(`Blob upload mislukt (${blobPath}): ${message}`)
+    }
 
     if (documentKind === 'hoofdcontract') {
       const latestMain = await db.query.contractDocuments.findFirst({
@@ -96,11 +122,12 @@ export async function POST(req: NextRequest) {
       ipAddress: req.headers.get('x-forwarded-for') ?? undefined,
     })
 
-    extractAndUpdateAsync(buffer, file.type, doc.id, contractId, user.orgId).catch(console.error)
+    extractAndUpdateAsync(Buffer.from(bytes), file.type, doc.id, contractId, user.orgId).catch(console.error)
 
     return NextResponse.json(doc)
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    console.error('Upload naar Blob mislukt:', err)
+    return NextResponse.json({ error: err?.message ?? 'Onbekende fout bij upload' }, { status: 500 })
   }
 }
 
