@@ -6,6 +6,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion'
 import { Loader2, MessageCircleQuestion, Sparkles, Link2 } from 'lucide-react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
@@ -22,6 +23,14 @@ type AskResponse = {
   }
 }
 
+const FREQUENT_QUESTIONS = [
+  'Wat is de opzegtermijn in dit contract?',
+  'Geldt er een automatische verlenging en onder welke voorwaarden?',
+  'Welke aansprakelijkheidsbeperkingen staan in dit contract?',
+  'Wat zijn de betalingsvoorwaarden en betaaltermijnen?',
+  'Welke belangrijkste verplichtingen hebben wij volgens dit contract?',
+]
+
 export default function ContractAskPage() {
   const searchParams = useSearchParams()
   const contractIdFromUrl = searchParams.get('contractId')
@@ -33,6 +42,10 @@ export default function ContractAskPage() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<AskResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [faqAnswers, setFaqAnswers] = useState<Record<string, string>>({})
+  const [faqLoading, setFaqLoading] = useState<Record<string, boolean>>({})
+  const [faqErrors, setFaqErrors] = useState<Record<string, string>>({})
+  const [openFaqItem, setOpenFaqItem] = useState<string>('')
 
   useEffect(() => {
     let cancelled = false
@@ -72,6 +85,47 @@ export default function ContractAskPage() {
       setSelectedContractId(contractIdFromUrl)
     }
   }, [contractIdFromUrl, contracts])
+
+  useEffect(() => {
+    setOpenFaqItem('')
+  }, [selectedContractId])
+
+  function faqKey(questionText: string) {
+    return `${selectedContractId}::${questionText}`
+  }
+
+  async function loadFaqAnswer(questionText: string) {
+    if (!selectedContractId) return
+    const key = faqKey(questionText)
+    if (faqAnswers[key] || faqLoading[key]) return
+
+    setFaqLoading((prev) => ({ ...prev, [key]: true }))
+    setFaqErrors((prev) => ({ ...prev, [key]: '' }))
+
+    try {
+      const res = await fetch('/api/ai/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: questionText,
+          contractIds: [selectedContractId],
+          portfolioMode: false,
+          referenceUrls: [],
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setFaqErrors((prev) => ({ ...prev, [key]: data.error ?? 'Er ging iets mis' }))
+        return
+      }
+
+      setFaqAnswers((prev) => ({ ...prev, [key]: (data as AskResponse).answer }))
+    } catch {
+      setFaqErrors((prev) => ({ ...prev, [key]: 'Netwerkfout' }))
+    } finally {
+      setFaqLoading((prev) => ({ ...prev, [key]: false }))
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -198,6 +252,79 @@ export default function ContractAskPage() {
               className="min-h-[120px] text-base"
               disabled={loading}
             />
+
+            {scopeMode === 'single' && selectedContractId && (
+              <div className="space-y-2">
+                <Label className="text-base">Veelgestelde vragen</Label>
+                <p className="text-xs text-muted-foreground">
+                  Klik op een vraag om direct een antwoord voor{' '}
+                  <span className="font-medium text-slate-800">{selectedContract?.title ?? 'dit contract'}</span> op
+                  te halen.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {FREQUENT_QUESTIONS.map((faq, index) => {
+                    const value = `faq-${index}`
+                    const key = faqKey(faq)
+                    const isActive = openFaqItem === value
+                    return (
+                      <Button
+                        key={`chip-${faq}`}
+                        type="button"
+                        variant={isActive ? 'default' : 'outline'}
+                        size="sm"
+                        className="h-auto py-1.5 text-xs text-left whitespace-normal"
+                        onClick={() => {
+                          setOpenFaqItem(value)
+                          void loadFaqAnswer(faq)
+                        }}
+                      >
+                        {faqLoading[key] ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                        {faq}
+                      </Button>
+                    )
+                  })}
+                </div>
+                <Accordion
+                  type="single"
+                  collapsible
+                  value={openFaqItem}
+                  className="w-full rounded-md border bg-white"
+                  onValueChange={(value) => {
+                    if (!value) {
+                      setOpenFaqItem('')
+                      return
+                    }
+                    setOpenFaqItem(value)
+                    const index = Number(value.replace('faq-', ''))
+                    if (Number.isNaN(index) || !FREQUENT_QUESTIONS[index]) return
+                    void loadFaqAnswer(FREQUENT_QUESTIONS[index])
+                  }}
+                >
+                  {FREQUENT_QUESTIONS.map((faq, index) => {
+                    const key = faqKey(faq)
+                    return (
+                      <AccordionItem key={faq} value={`faq-${index}`} className="px-3">
+                        <AccordionTrigger className="text-left text-sm">{faq}</AccordionTrigger>
+                        <AccordionContent className="text-sm">
+                          {faqLoading[key] ? (
+                            <span className="inline-flex items-center gap-2 text-muted-foreground">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Antwoord ophalen...
+                            </span>
+                          ) : faqErrors[key] ? (
+                            <span className="text-red-700">{faqErrors[key]}</span>
+                          ) : faqAnswers[key] ? (
+                            <span className="whitespace-pre-wrap text-muted-foreground">{faqAnswers[key]}</span>
+                          ) : (
+                            <span className="italic text-muted-foreground">Klik om het antwoord te laden.</span>
+                          )}
+                        </AccordionContent>
+                      </AccordionItem>
+                    )
+                  })}
+                </Accordion>
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor="urls" className="flex items-center gap-2 text-base">
