@@ -111,7 +111,7 @@ export function ContractDocuments({ contract, user }: { contract: any; user: any
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="hoofdcontract">Hoofdcontract (vervangt vorige hoofdversie)</SelectItem>
+                    <SelectItem value="hoofdcontract">Hoofdcontractdocument (toevoegen onder contract)</SelectItem>
                     <SelectItem value="addendum">Addendum / wijziging (aanvullend; heeft voorrang bij vragen)</SelectItem>
                   </SelectContent>
                 </Select>

@@ -28,12 +28,16 @@ export async function loadContractTextBlocks(
     if (!contract) continue
     if (options?.hideArchivedForReader && contract.status === 'gearchiveerd') continue
 
-    const { main, addenda } = await loadContractCorpusParts(contractId)
-    if (!main && addenda.length === 0) continue
+    const { mainDocuments, addenda } = await loadContractCorpusParts(contractId)
+    if (mainDocuments.length === 0 && addenda.length === 0) continue
 
     try {
-      // Eerst hoofdcontract, daarna addenda (oud → nieuw): het laatste addendum is de meest recente wijziging.
-      if (main) {
+      const sortedAddenda = [...addenda].sort(
+        (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
+      )
+
+      // Eerst hoofdcontractdocumenten, daarna addenda (nieuw → oud) zodat wijzigingen prioriteit krijgen.
+      for (const main of mainDocuments) {
         const text = await parseDocumentFromStoredFile(main)
         blocks.push({
           kind: 'contract',
@@ -43,7 +47,8 @@ export async function loadContractTextBlocks(
           text: text.slice(0, MAX_CHARS_MAIN),
         })
       }
-      for (const ad of addenda) {
+
+      for (const ad of sortedAddenda) {
         const text = await parseDocumentFromStoredFile(ad)
         blocks.push({
           kind: 'addendum',

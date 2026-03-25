@@ -15,20 +15,25 @@ export async function loadContractCorpusParts(contractId: string) {
     where: and(eq(contractDocuments.contractId, contractId), eq(contractDocuments.isCurrent, true)),
     orderBy: [asc(contractDocuments.uploadedAt)],
   })
-  const main = current.find((d) => d.documentKind === 'hoofdcontract') ?? null
+  const mainDocuments = current.filter((d) => d.documentKind === 'hoofdcontract')
   const addenda = current.filter((d) => d.documentKind === 'addendum')
-  return { main, addenda }
+  return { mainDocuments, addenda }
 }
 
 /** Volledige tekst voor risico-/compliance-analyse: hoofdcontract eerst, daarna addenda (oud → nieuw). */
 export async function loadContractCorpusPlainTextForAnalysis(contractId: string): Promise<string> {
-  const { main, addenda } = await loadContractCorpusParts(contractId)
+  const { mainDocuments, addenda } = await loadContractCorpusParts(contractId)
   const parts: string[] = []
-  if (main) {
-    const text = await parseDocumentFromStoredFile(main)
-    parts.push(`=== HOOFDCONTRACT (${main.filename}) ===\n${text}`)
+  const sortedAddenda = [...addenda].sort(
+    (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
+  )
+
+  for (const m of mainDocuments) {
+    const text = await parseDocumentFromStoredFile(m)
+    parts.push(`=== HOOFDCONTRACT (${m.filename}) ===\n${text}`)
   }
-  for (const a of addenda) {
+
+  for (const a of sortedAddenda) {
     const text = await parseDocumentFromStoredFile(a)
     parts.push(`=== ADDENDUM / WIJZIGING (${a.filename}) ===\n${text}`)
   }
@@ -45,15 +50,20 @@ export async function loadContractCorpusPlainTextForAnalysis(contractId: string)
  * in de eerste ~8000 tekens van het embedding-model.
  */
 export async function loadContractCorpusPlainTextForEmbedding(contractId: string): Promise<string> {
-  const { main, addenda } = await loadContractCorpusParts(contractId)
+  const { mainDocuments, addenda } = await loadContractCorpusParts(contractId)
   const parts: string[] = []
-  for (const a of addenda) {
+  const sortedAddenda = [...addenda].sort(
+    (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
+  )
+
+  for (const a of sortedAddenda) {
     const text = await parseDocumentFromStoredFile(a)
     parts.push(`Addendum (${a.filename}):\n${text}`)
   }
-  if (main) {
-    const text = await parseDocumentFromStoredFile(main)
-    parts.push(`Hoofdcontract (${main.filename}):\n${text}`)
+
+  for (const m of mainDocuments) {
+    const text = await parseDocumentFromStoredFile(m)
+    parts.push(`Hoofdcontract (${m.filename}):\n${text}`)
   }
   return parts.join('\n\n---\n\n')
 }

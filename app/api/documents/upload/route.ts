@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { put } from '@vercel/blob'
 import { getOrCreateUser } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { contractDocuments, documentVersions, contracts } from '@/lib/db/schema'
-import { eq, and, desc } from 'drizzle-orm'
+import { contractDocuments, contracts } from '@/lib/db/schema'
+import { eq, and } from 'drizzle-orm'
 import { parseDocument } from '@/lib/parse-document'
 import { extractContractData } from '@/lib/openai'
 import { logAudit } from '@/lib/audit'
@@ -77,28 +77,6 @@ export async function POST(req: NextRequest) {
     } catch (err: any) {
       const message = err?.message || 'Blob upload mislukt'
       throw new Error(`Blob upload mislukt (${blobPath}): ${message}`)
-    }
-
-    if (documentKind === 'hoofdcontract') {
-      const latestMain = await db.query.contractDocuments.findFirst({
-        where: and(
-          eq(contractDocuments.contractId, contractId),
-          eq(contractDocuments.isCurrent, true),
-          eq(contractDocuments.documentKind, 'hoofdcontract')
-        ),
-        orderBy: [desc(contractDocuments.versionNumber)],
-      })
-
-      if (latestMain) {
-        await db.insert(documentVersions).values({
-          documentId: latestMain.id,
-          versionNumber: latestMain.versionNumber,
-          fileUrl: latestMain.fileUrl,
-          uploadedBy: latestMain.uploadedBy,
-          uploadedAt: latestMain.uploadedAt,
-        })
-        await db.update(contractDocuments).set({ isCurrent: false }).where(eq(contractDocuments.id, latestMain.id))
-      }
     }
 
     const [doc] = await db.insert(contractDocuments).values({
