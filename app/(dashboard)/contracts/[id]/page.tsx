@@ -14,6 +14,8 @@ import { ContractAudit } from './contract-audit'
 import { ContractAiAnalysis } from './contract-ai-analysis'
 import { ContractCompliance } from './contract-compliance'
 import { ContractAccess } from './contract-access'
+import Link from 'next/link'
+import { Button } from '@/components/ui/button'
 
 export default async function ContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -56,6 +58,9 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
           <h1 className="text-2xl font-bold text-gray-900">{contract.title}</h1>
           <p className="text-muted-foreground">{contract.contractNumber ?? 'Geen nummer'} · {contract.contractType ?? 'Onbekend type'}</p>
         </div>
+        <Button asChild>
+          <Link href={`/ai/ask?contractId=${id}`}>Vraag over dit contract</Link>
+        </Button>
       </div>
 
       <Tabs defaultValue="overview" className="space-y-4">

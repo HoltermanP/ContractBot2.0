@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Loader2, MessageCircleQuestion, Sparkles, Link2 } from 'lucide-react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 
 type ContractRow = { id: string; title: string; contractNumber: string | null; status: string }
 
@@ -22,10 +23,12 @@ type AskResponse = {
 }
 
 export default function ContractAskPage() {
+  const searchParams = useSearchParams()
+  const contractIdFromUrl = searchParams.get('contractId')
   const [question, setQuestion] = useState('')
   const [contracts, setContracts] = useState<ContractRow[]>([])
-  const [selected, setSelected] = useState<Record<string, boolean>>({})
-  const [portfolioAuto, setPortfolioAuto] = useState(true)
+  const [scopeMode, setScopeMode] = useState<'auto' | 'single'>('auto')
+  const [selectedContractId, setSelectedContractId] = useState('')
   const [referenceUrls, setReferenceUrls] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<AskResponse | null>(null)
@@ -56,19 +59,30 @@ export default function ContractAskPage() {
     }
   }, [])
 
-  function toggleContract(id: string) {
-    setSelected((s) => ({ ...s, [id]: !s[id] }))
-  }
+  const selectedContract = useMemo(
+    () => contracts.find((contract) => contract.id === selectedContractId) ?? null,
+    [contracts, selectedContractId]
+  )
+
+  useEffect(() => {
+    if (!contractIdFromUrl || contracts.length === 0) return
+    const exists = contracts.some((contract) => contract.id === contractIdFromUrl)
+    if (exists) {
+      setScopeMode('single')
+      setSelectedContractId(contractIdFromUrl)
+    }
+  }, [contractIdFromUrl, contracts])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const q = question.trim()
     if (!q) return
+    if (scopeMode === 'single' && !selectedContractId) return
     setLoading(true)
     setError(null)
     setResult(null)
     try {
-      const contractIds = portfolioAuto ? [] : Object.keys(selected).filter((id) => selected[id])
+      const contractIds = scopeMode === 'single' ? [selectedContractId] : []
       const urls = referenceUrls
         .split(/\n/)
         .map((l) => l.trim())
@@ -80,7 +94,7 @@ export default function ContractAskPage() {
         body: JSON.stringify({
           question: q,
           contractIds,
-          portfolioMode: portfolioAuto,
+          portfolioMode: scopeMode === 'auto',
           referenceUrls: urls,
         }),
       })
@@ -111,9 +125,69 @@ export default function ContractAskPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
+        <Card className="border-blue-100 bg-blue-50/40">
+          <CardHeader>
+            <CardTitle className="text-lg">1. Kies contractcontext</CardTitle>
+            <CardDescription>
+              Maak eerst een keuze: automatisch relevante contracten, of een specifiek contract.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="radio"
+                name="scope"
+                checked={scopeMode === 'auto'}
+                onChange={() => setScopeMode('auto')}
+                disabled={loading}
+              />
+              <Sparkles className="h-4 w-4 text-amber-500 shrink-0" />
+              Automatisch de meest relevante contracten kiezen
+            </label>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="radio"
+                name="scope"
+                checked={scopeMode === 'single'}
+                onChange={() => setScopeMode('single')}
+                disabled={loading}
+              />
+              Ik kies een specifiek contract
+            </label>
+            {scopeMode === 'single' && (
+              <div className="space-y-2">
+                <Label htmlFor="contract-select">Contract</Label>
+                <select
+                  id="contract-select"
+                  value={selectedContractId}
+                  onChange={(e) => setSelectedContractId(e.target.value)}
+                  disabled={loading || contracts.length === 0}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  <option value="">Selecteer een contract</option>
+                  {contracts.map((contract) => (
+                    <option key={contract.id} value={contract.id}>
+                      {contract.title}
+                      {contract.contractNumber ? ` (#${contract.contractNumber})` : ''}
+                    </option>
+                  ))}
+                </select>
+                {selectedContract && (
+                  <p className="text-xs text-muted-foreground">
+                    Geselecteerd: <span className="font-medium text-slate-800">{selectedContract.title}</span>{' '}
+                    <Badge variant="outline" className="text-[10px] ml-1">
+                      {selectedContract.status}
+                    </Badge>
+                  </p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Uw vraag</CardTitle>
+            <CardTitle className="text-lg">2. Stel uw vraag</CardTitle>
             <CardDescription>Bijvoorbeeld: wat is de opzegtermijn, of hoe zit het met aansprakelijkheid?</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -124,59 +198,6 @@ export default function ContractAskPage() {
               className="min-h-[120px] text-base"
               disabled={loading}
             />
-
-            <div className="space-y-2">
-              <Label className="text-base">Bronnen — contracten</Label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  type="radio"
-                  name="scope"
-                  checked={portfolioAuto}
-                  onChange={() => setPortfolioAuto(true)}
-                  disabled={loading}
-                />
-                <Sparkles className="h-4 w-4 text-amber-500 shrink-0" />
-                Automatisch de meest relevante contracten kiezen (semantisch)
-              </label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  type="radio"
-                  name="scope"
-                  checked={!portfolioAuto}
-                  onChange={() => setPortfolioAuto(false)}
-                  disabled={loading}
-                />
-                Zelf contracten aanvinken
-              </label>
-              {!portfolioAuto && (
-                <div className="border rounded-md p-3 max-h-48 overflow-y-auto space-y-2 bg-slate-50/80">
-                  {contracts.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">Geen contracten geladen.</p>
-                  ) : (
-                    contracts.map((c) => (
-                      <label key={c.id} className="flex items-start gap-2 text-sm cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={!!selected[c.id]}
-                          onChange={() => toggleContract(c.id)}
-                          disabled={loading}
-                          className="mt-0.5 rounded"
-                        />
-                        <span>
-                          <span className="font-medium">{c.title}</span>
-                          {c.contractNumber && (
-                            <span className="text-muted-foreground"> · #{c.contractNumber}</span>
-                          )}{' '}
-                          <Badge variant="outline" className="text-[10px] ml-1">
-                            {c.status}
-                          </Badge>
-                        </span>
-                      </label>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
 
             <div className="space-y-2">
               <Label htmlFor="urls" className="flex items-center gap-2 text-base">
@@ -196,7 +217,11 @@ export default function ContractAskPage() {
               </p>
             </div>
 
-            <Button type="submit" disabled={loading || !question.trim()} className="w-full sm:w-auto">
+            <Button
+              type="submit"
+              disabled={loading || !question.trim() || (scopeMode === 'single' && !selectedContractId)}
+              className="w-full sm:w-auto"
+            >
               {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
               Antwoord genereren
             </Button>

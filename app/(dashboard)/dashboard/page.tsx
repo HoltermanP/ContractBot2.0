@@ -5,7 +5,7 @@ import { eq, and, lt, gte, count, sql } from 'drizzle-orm'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { formatDate, formatCurrency, daysUntil, getExpiryBadgeClass } from '@/lib/utils'
-import { FileText, AlertTriangle, CheckCircle, Clock, TrendingUp } from 'lucide-react'
+import { FileText, AlertTriangle, CheckCircle, Clock, TrendingUp, MessageCircleQuestion } from 'lucide-react'
 import Link from 'next/link'
 import { DashboardChart } from './dashboard-chart'
 
@@ -96,6 +96,31 @@ export default async function DashboardPage() {
         <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
         <p className="text-muted-foreground">Welkom bij AI-Contractbot — overzicht van uw contractportfolio</p>
       </div>
+
+      <Card className="border-blue-100 bg-gradient-to-r from-blue-50 to-indigo-50">
+        <CardContent className="pt-6">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="space-y-1">
+              <p className="inline-flex items-center gap-2 text-sm font-medium text-blue-700">
+                <MessageCircleQuestion className="h-4 w-4" />
+                Snel starten met Contractvragen
+              </p>
+              <h2 className="text-lg font-semibold text-slate-900">
+                Stel direct een vraag over een contract of over uw hele portfolio
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Kies in de chat eerst het contract en krijg daarna een onderbouwd antwoord met bronnen.
+              </p>
+            </div>
+            <Link
+              href="/ai/ask"
+              className="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              Open Contractvragen
+            </Link>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">

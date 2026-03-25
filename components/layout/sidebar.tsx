@@ -11,6 +11,7 @@ import { UserButton } from '@clerk/nextjs'
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/ai/ask', label: 'Contractvragen', icon: MessageCircleQuestion },
   { href: '/projects', label: 'Projecten', icon: FolderKanban },
   { href: '/contracts', label: 'Contracten', icon: FileText },
   { href: '/suppliers', label: 'Leveranciers', icon: Building2 },
@@ -20,7 +21,6 @@ const navItems = [
 ]
 
 const aiItems = [
-  { href: '/ai/ask', label: 'Contractvragen', icon: MessageCircleQuestion },
   { href: '/contracts/compare', label: 'Contractvergelijking', icon: GitCompare },
   { href: '/ai/draft', label: 'Ontwerp-assistent', icon: PenLine },
   { href: '/training', label: 'Training & e-learning', icon: GraduationCap },
