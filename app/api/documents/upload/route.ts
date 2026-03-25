@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
     let blob: Awaited<ReturnType<typeof put>>
     try {
       blob = await put(blobPath, uploadBody, {
-        access: 'public',
+        access: 'private',
         contentType: file.type || 'application/octet-stream',
         token: process.env.BLOB_READ_WRITE_TOKEN,
       })
@@ -104,7 +104,8 @@ export async function POST(req: NextRequest) {
     const [doc] = await db.insert(contractDocuments).values({
       contractId,
       filename: file.name,
-      fileUrl: blob.url,
+      // For private Blob stores we persist the downloadUrl so existing fetch/link logic keeps working.
+      fileUrl: blob.downloadUrl,
       fileType: file.type,
       fileSize: file.size,
       versionNumber: newVersion,
