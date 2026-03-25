@@ -1,0 +1,2 @@
+CREATE TYPE "public"."document_kind" AS ENUM('hoofdcontract', 'addendum');--> statement-breakpoint
+ALTER TABLE "contract_documents" ADD COLUMN "document_kind" "document_kind" DEFAULT 'hoofdcontract' NOT NULL;
