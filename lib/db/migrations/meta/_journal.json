@@ -22,6 +22,20 @@
       "when": 1774387901477,
       "tag": "0002_fluffy_magik",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1774537800000,
+      "tag": "0003_contract_management",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1774540000000,
+      "tag": "0004_contract_management_cleanup",
+      "breakpoints": true
     }
   ]
 }

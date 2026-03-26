@@ -17,8 +17,48 @@ const DEMO_PDF_URL_ALT = 'https://mozilla.github.io/pdf.js/web/compressed.tracem
 const sql = neon(process.env.DATABASE_URL!)
 const db = drizzle(sql, { schema })
 
+async function clearAllData() {
+  console.log('🧹 Bestaande data verwijderen...')
+
+  // Child -> parent volgorde om FK-conflicten te voorkomen
+  await db.delete(schema.trainingProgress)
+  await db.delete(schema.trainingModules)
+  await db.delete(schema.trainingCourseDocuments)
+  await db.delete(schema.trainingCourseContracts)
+  await db.delete(schema.trainingCourses)
+  await db.delete(schema.contractAccess)
+  await db.delete(schema.dashboardNotifications)
+  await db.delete(schema.auditLog)
+  await db.delete(schema.approvalWorkflows)
+  await db.delete(schema.notificationsLog)
+  await db.delete(schema.notificationRules)
+  await db.delete(schema.contractObligations)
+  await db.delete(schema.documentVersions)
+  await db.delete(schema.contractDocuments)
+  await db.delete(schema.contracts)
+  await db.delete(schema.suppliers)
+  await db.delete(schema.customFields)
+  await db.delete(schema.projects)
+  await db.delete(schema.organizationMembers)
+  await db.delete(schema.users)
+  await db.delete(schema.organizations)
+
+  // Nieuwe contract management model
+  await db.delete(schema.contractClause)
+  await db.delete(schema.contractDocumentNode)
+  await db.delete(schema.contractVersion)
+  await db.delete(schema.contractProject)
+  await db.delete(schema.contract)
+  await db.delete(schema.project)
+  await db.delete(schema.programme)
+  await db.delete(schema.organisation)
+
+  console.log('✓ Alle bestaande data verwijderd')
+}
+
 async function seed() {
   console.log('🌱 Testdata laden...\n')
+  await clearAllData()
 
   // ── Organisatie ──────────────────────────────────────────────
   const [org] = await db.insert(schema.organizations).values({
@@ -47,6 +87,24 @@ async function seed() {
     mainProject = p
     console.log(`✓ Project: ${mainProject.name}`)
   }
+
+  const createdProjects: typeof schema.projects.$inferSelect[] = [mainProject]
+  const projectThemes = [
+    'Onderwijs', 'Onderzoek', 'ICT', 'Facilitair', 'Finance', 'HR', 'Juridisch',
+    'Inkoop', 'Huisvesting', 'Security', 'Data', 'Innovatie',
+  ]
+  for (let i = 1; i <= 35; i++) {
+    const [project] = await db
+      .insert(schema.projects)
+      .values({
+        orgId: org.id,
+        name: `Project ${i.toString().padStart(2, '0')} - ${projectThemes[i % projectThemes.length]}`,
+        description: `Testproject ${i} voor bredere contractportefeuille`,
+      })
+      .returning()
+    createdProjects.push(project)
+  }
+  console.log(`✓ ${createdProjects.length} projecten beschikbaar`)
 
   // ── Gebruikers ───────────────────────────────────────────────
   const usersData = [
@@ -116,6 +174,22 @@ async function seed() {
   }
 
   const [microsoft, capgemini, exact, facility, nedap, konica, siemens, adobe, cisco, aws] = createdSuppliers
+
+  // Extra leveranciers voor ruime testdataset
+  for (let i = 1; i <= 40; i++) {
+    const [supplier] = await db
+      .insert(schema.suppliers)
+      .values({
+        orgId: org.id,
+        name: `Test Leverancier ${i.toString().padStart(2, '0')} B.V.`,
+        kvk: `99${i.toString().padStart(6, '0')}`,
+        contactEmail: `inkoop+leverancier${i}@universiteitleiden.nl`,
+        contactName: `Contactpersoon ${i}`,
+      })
+      .returning()
+    createdSuppliers.push(supplier)
+  }
+  console.log('✓ 40 extra leveranciers toegevoegd')
 
   // ── Contracten ───────────────────────────────────────────────
   const now = new Date()
@@ -440,7 +514,7 @@ async function seed() {
   ]
 
   const createdContracts: typeof schema.contracts.$inferSelect[] = []
-  for (const c of contractsData) {
+  for (const [idx, c] of contractsData.entries()) {
     const existing = await db.query.contracts.findFirst({
       where: eq(schema.contracts.contractNumber, c.contractNumber!),
     })
@@ -457,7 +531,7 @@ async function seed() {
 
     const [contract] = await db.insert(schema.contracts).values({
       orgId: org.id,
-      projectId: mainProject.id,
+      projectId: createdProjects[idx % createdProjects.length].id,
       title: c.title,
       contractNumber: c.contractNumber,
       status: c.status,
@@ -483,6 +557,54 @@ async function seed() {
     createdContracts.push(contract)
     console.log(`✓ Contract: ${contract.title}`)
   }
+
+  // Bulkcontracten: extra volume voor dashboard, filters en AI-tests
+  const bulkStatuses: Array<typeof schema.contracts.$inferInsert.status> = ['actief', 'concept', 'verlopen', 'gearchiveerd']
+  const bulkTypes = ['SLA', 'Dienstverleningscontract', 'Leveringscontract', 'Raamovereenkomst', 'Licentieovereenkomst']
+
+  for (let i = 1; i <= 320; i++) {
+    const supplier = createdSuppliers[(i * 7) % createdSuppliers.length]
+    const project = createdProjects[(i * 5) % createdProjects.length]
+    const owner = i % 3 === 0 ? admin : i % 2 === 0 ? manager : registrator
+    const status = bulkStatuses[i % bulkStatuses.length]
+    const startDate = d(-(1200 - i * 6))
+    const endDate = status === 'concept' ? d(120 + i) : d(-90 + i * 8)
+    const retentionYears = 5 + (i % 6)
+    const archivedAt = status === 'gearchiveerd' ? d(-(20 + i)) : null
+    const archivedBy = status === 'gearchiveerd' ? admin.id : null
+    const valueAnnual = 15000 + i * 1750
+    const valueTotal = valueAnnual * (2 + (i % 4))
+    const [contract] = await db
+      .insert(schema.contracts)
+      .values({
+        orgId: org.id,
+        projectId: project.id,
+        title: `Testcontract ${i.toString().padStart(3, '0')} — ${supplier.name}`,
+        contractNumber: `UL-TST-2026-${i.toString().padStart(3, '0')}`,
+        status,
+        contractType: bulkTypes[i % bulkTypes.length],
+        supplierId: supplier.id,
+        ownerUserId: owner.id,
+        startDate,
+        endDate,
+        optionDate: status === 'actief' ? d(30 + i * 2) : null,
+        noticePeriodDays: 30 + (i % 6) * 15,
+        valueTotal: String(valueTotal),
+        valueAnnual: String(valueAnnual),
+        currency: 'EUR',
+        autoRenewal: i % 2 === 0,
+        autoRenewalTerms: i % 2 === 0 ? 'Automatische verlenging met 12 maanden' : null,
+        retentionYears,
+        destructionDate: new Date(endDate.getTime() + retentionYears * 365 * 86400000),
+        createdBy: admin.id,
+        updatedAt: new Date(),
+        archivedAt,
+        archivedBy,
+      })
+      .returning()
+    createdContracts.push(contract)
+  }
+  console.log('✓ 320 extra bulkcontracten toegevoegd')
 
   const contractByNumber = new Map(
     createdContracts
@@ -560,6 +682,42 @@ async function seed() {
     })
     documentsInserted++
   }
+  for (let i = 0; i < Math.min(280, createdContracts.length); i++) {
+    const c = createdContracts[i]
+    await db.insert(schema.contractDocuments).values({
+      contractId: c.id,
+      filename: `Automatisch-testdocument-${(i + 1).toString().padStart(3, '0')}.pdf`,
+      fileUrl: i % 2 === 0 ? DEMO_PDF_URL : DEMO_PDF_URL_ALT,
+      fileType: 'application/pdf',
+      fileSize: 180_000 + i * 7_500,
+      versionNumber: 1,
+      isCurrent: true,
+      documentKind: i % 4 === 0 ? 'addendum' : 'hoofdcontract',
+      uploadedBy: i % 2 === 0 ? manager.id : registrator.id,
+      uploadedAt: d(-(i + 3)),
+      aiProcessed: i % 3 !== 0,
+      aiExtractedDataJson: { source: 'bulk-seed', idx: i + 1 },
+    })
+    documentsInserted++
+  }
+  for (let i = 0; i < Math.min(180, createdContracts.length); i++) {
+    const c = createdContracts[(i * 3) % createdContracts.length]
+    await db.insert(schema.contractDocuments).values({
+      contractId: c.id,
+      filename: `Automatisch-bijlage-testdocument-${(i + 1).toString().padStart(3, '0')}.pdf`,
+      fileUrl: i % 2 === 0 ? DEMO_PDF_URL_ALT : DEMO_PDF_URL,
+      fileType: 'application/pdf',
+      fileSize: 90_000 + i * 4_200,
+      versionNumber: 2,
+      isCurrent: i % 6 !== 0,
+      documentKind: 'addendum',
+      uploadedBy: i % 2 === 0 ? registrator.id : manager.id,
+      uploadedAt: d(-(i + 8)),
+      aiProcessed: i % 4 !== 0,
+      aiExtractedDataJson: { source: 'bulk-seed-addendum', idx: i + 1 },
+    })
+    documentsInserted++
+  }
   console.log(`✓ ${documentsInserted} contractdocumenten toegevoegd (${documentsSeed.length} in catalogus)`)
 
   // ── Verplichtingen ───────────────────────────────────────────
@@ -599,7 +757,36 @@ async function seed() {
       extractedByAi: false,
     })
   }
-  console.log(`✓ ${obligationsData.length} verplichtingen aangemaakt`)
+  const extraObligationStatuses: Array<typeof schema.contractObligations.$inferInsert.status> = [
+    'open',
+    'in_progress',
+    'compliant',
+    'non_compliant',
+  ]
+  const extraObligationCategories: Array<typeof schema.contractObligations.$inferInsert.category> = [
+    'it_security',
+    'privacy',
+    'financial',
+    'sustainability',
+    'other',
+  ]
+  let extraObligations = 0
+  for (let i = 0; i < Math.min(80, createdContracts.length); i++) {
+    const contract = createdContracts[i]
+    for (let j = 1; j <= 2; j++) {
+      await db.insert(schema.contractObligations).values({
+        contractId: contract.id,
+        description: `Automatische testverplichting ${j} voor ${contract.contractNumber ?? contract.id}`,
+        category: extraObligationCategories[(i + j) % extraObligationCategories.length],
+        dueDate: d(10 + i + j * 7),
+        status: extraObligationStatuses[(i + j) % extraObligationStatuses.length],
+        recurring: j % 2 === 0,
+        extractedByAi: false,
+      })
+      extraObligations++
+    }
+  }
+  console.log(`✓ ${obligationsData.length + extraObligations} verplichtingen aangemaakt`)
 
   // ── Notificatieregels ────────────────────────────────────────
   const notifData = [
@@ -626,7 +813,19 @@ async function seed() {
       active: true,
     })
   }
-  console.log(`✓ ${notifData.length} notificatieregels aangemaakt`)
+  let extraNotifRules = 0
+  for (let i = 0; i < Math.min(50, createdContracts.length); i++) {
+    await db.insert(schema.notificationRules).values({
+      contractId: createdContracts[i].id,
+      triggerType: 'days_before_end',
+      triggerValue: 15 + (i % 6) * 15,
+      recipientsJson: ['s.janssen@universiteitleiden.nl'] as any,
+      channel: 'both',
+      active: i % 5 !== 0,
+    })
+    extraNotifRules++
+  }
+  console.log(`✓ ${notifData.length + extraNotifRules} notificatieregels aangemaakt`)
 
   // ── Goedkeuringsworkflows ────────────────────────────────────
   const wfData = [
@@ -734,11 +933,12 @@ async function seed() {
   console.log('   Admin:       p.vandenberg@universiteitleiden.nl')
   console.log('   Manager:     s.janssen@universiteitleiden.nl')
   console.log('\n📊 Overzicht:')
-  console.log(`   ${contractsData.length} contracten (actief/verlopen/gearchiveerd/concept)`)
-  console.log(`   ${suppliersData.length} leveranciers`)
-  console.log(`   ${documentsSeed.length} contractdocumenten (PDF-koppelingen, idempotent)`)
-  console.log(`   ${obligationsData.length} verplichtingen`)
-  console.log(`   ${notifData.length} notificatieregels`)
+  console.log(`   ${createdProjects.length} projecten`)
+  console.log(`   ${createdContracts.length} contracten (incl. bulk testset)`)
+  console.log(`   ${createdSuppliers.length} leveranciers`)
+  console.log(`   ${documentsInserted} contractdocumenten`)
+  console.log(`   ${obligationsData.length + extraObligations} verplichtingen`)
+  console.log(`   ${notifData.length + extraNotifRules} notificatieregels`)
   console.log('   3 goedkeuringsworkflows')
   console.log(`   ${fields.length} aangepaste metadatavelden`)
   process.exit(0)

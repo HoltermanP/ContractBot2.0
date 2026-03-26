@@ -1,20 +1,19 @@
 import { getOrCreateUser } from '@/lib/auth'
-import { db } from '@/lib/db'
-import { contracts, suppliers, projects } from '@/lib/db/schema'
-import { eq, and, or, ilike, desc } from 'drizzle-orm'
+import { db, contract, contractProject, project } from '@/lib/db'
+import { and, eq, inArray } from 'drizzle-orm'
 import { ensureDefaultProjectForOrg } from '@/lib/org'
 import { canMutateContractData } from '@/lib/permissions'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { formatDate, formatCurrency, daysUntil, getExpiryBadgeClass, STATUS_LABELS } from '@/lib/utils'
+import { formatDate, daysUntil, getExpiryBadgeClass } from '@/lib/utils'
 import Link from 'next/link'
 import { Plus } from 'lucide-react'
 import { ContractsFilter } from './contracts-filter'
+import { z } from 'zod'
 
 interface SearchParams {
   status?: string
   search?: string
-  type?: string
   project?: string
 }
 
@@ -23,39 +22,57 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
   const user = await getOrCreateUser()
   if (!user) return null
 
-  await ensureDefaultProjectForOrg(user.orgId)
+  const parsedOrgId = z.string().uuid().safeParse(user.orgId)
+  if (!parsedOrgId.success) return null
 
-  const conditions = [eq(contracts.orgId, user.orgId)]
+  await ensureDefaultProjectForOrg(parsedOrgId.data)
 
-  // Readers don't see archived contracts
-  if (user.role === 'reader') {
-    conditions.push(or(eq(contracts.status, 'actief'), eq(contracts.status, 'concept'), eq(contracts.status, 'verlopen'))!)
-  }
-
-  if (resolvedParams.status) conditions.push(eq(contracts.status, resolvedParams.status as any))
-  if (resolvedParams.project) {
-    conditions.push(eq(contracts.projectId, resolvedParams.project))
-  }
-  if (resolvedParams.search) {
-    conditions.push(or(
-      ilike(contracts.title, `%${resolvedParams.search}%`),
-      ilike(contracts.contractNumber, `%${resolvedParams.search}%`)
-    )!)
-  }
-
-  const allContracts = await db.query.contracts.findMany({
-    where: and(...conditions),
-    orderBy: [desc(contracts.updatedAt)],
-    with: { supplier: true, owner: true, project: true },
+  const allProjects = await db.query.project.findMany({
+    where: eq(project.organisationId, parsedOrgId.data),
+    orderBy: (p, { asc }) => [asc(p.name)],
   })
+  const allowedProjectIds = allProjects.map((p) => p.id)
+  if (allowedProjectIds.length === 0) return null
 
-  const [allSuppliers, allProjects] = await Promise.all([
-    db.query.suppliers.findMany({ where: eq(suppliers.orgId, user.orgId) }),
-    db.query.projects.findMany({
-      where: eq(projects.orgId, user.orgId),
-      orderBy: (p, { asc }) => [asc(p.name)],
-    }),
-  ])
+  const selectedProjectIds =
+    resolvedParams.project && allowedProjectIds.includes(resolvedParams.project)
+      ? [resolvedParams.project]
+      : allowedProjectIds
+
+  const links = await db
+    .select({
+      contractId: contractProject.contractId,
+      projectId: contractProject.projectId,
+      projectName: project.name,
+    })
+    .from(contractProject)
+    .innerJoin(project, eq(project.id, contractProject.projectId))
+    .where(and(eq(project.organisationId, parsedOrgId.data)))
+
+  const linkByContract = new Map<string, Array<{ projectId: string; projectName: string }>>()
+  for (const link of links) {
+    if (!selectedProjectIds.includes(link.projectId)) continue
+    const existing = linkByContract.get(link.contractId) ?? []
+    existing.push({ projectId: link.projectId, projectName: link.projectName })
+    linkByContract.set(link.contractId, existing)
+  }
+
+  const contractIds = [...new Set([...linkByContract.keys()])]
+  const baseContracts = contractIds.length
+    ? await db.select().from(contract).where(inArray(contract.id, contractIds))
+    : []
+  const allContracts = baseContracts
+    .filter((c) => !resolvedParams.status || c.status === resolvedParams.status)
+    .filter(
+      (c) =>
+        !resolvedParams.search ||
+        c.reference.toLowerCase().includes(resolvedParams.search.toLowerCase()) ||
+        c.contractType.toLowerCase().includes(resolvedParams.search.toLowerCase())
+    )
+    .map((c) => ({
+      ...c,
+      projects: linkByContract.get(c.id) ?? [],
+    }))
 
   return (
     <div className="space-y-6">
@@ -74,21 +91,17 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
         )}
       </div>
 
-      <ContractsFilter suppliers={allSuppliers} projects={allProjects} currentParams={resolvedParams} />
+      <ContractsFilter suppliers={[]} projects={allProjects.map((p) => ({ id: p.id, name: p.name }))} currentParams={resolvedParams} />
 
       <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b">
             <tr className="text-left text-muted-foreground">
-              <th className="px-4 py-3 font-medium">Naam</th>
+              <th className="px-4 py-3 font-medium">Referentie</th>
               <th className="px-4 py-3 font-medium">Project</th>
-              <th className="px-4 py-3 font-medium">Nummer</th>
-              <th className="px-4 py-3 font-medium">Leverancier</th>
               <th className="px-4 py-3 font-medium">Type</th>
               <th className="px-4 py-3 font-medium">Status</th>
               <th className="px-4 py-3 font-medium">Afloopdatum</th>
-              <th className="px-4 py-3 font-medium">Waarde (jaar)</th>
-              <th className="px-4 py-3 font-medium">Eigenaar</th>
             </tr>
           </thead>
           <tbody className="divide-y">
@@ -98,18 +111,16 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
                 <tr key={contract.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-3">
                     <Link href={`/contracts/${contract.id}`} className="font-medium text-blue-600 hover:underline">
-                      {contract.title}
+                      {contract.reference}
                     </Link>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    {(contract as { project?: { name?: string } | null }).project?.name ?? '—'}
+                    {contract.projects.map((p) => p.projectName).join(', ') || '—'}
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground">{contract.contractNumber ?? '—'}</td>
-                  <td className="px-4 py-3">{(contract as any).supplier?.name ?? '—'}</td>
-                  <td className="px-4 py-3">{contract.contractType ?? '—'}</td>
+                  <td className="px-4 py-3">{contract.contractType}</td>
                   <td className="px-4 py-3">
                     <Badge variant={contract.status === 'actief' ? 'success' : contract.status === 'verlopen' ? 'danger' : 'outline'}>
-                      {STATUS_LABELS[contract.status] ?? contract.status}
+                      {contract.status}
                     </Badge>
                   </td>
                   <td className="px-4 py-3">
@@ -124,8 +135,6 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
                       </span>
                     ) : '—'}
                   </td>
-                  <td className="px-4 py-3">{formatCurrency(contract.valueAnnual, contract.currency ?? 'EUR')}</td>
-                  <td className="px-4 py-3 text-muted-foreground">{(contract as any).owner?.name ?? '—'}</td>
                 </tr>
               )
             })}

@@ -4,26 +4,32 @@ import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import {
   LayoutDashboard, FileText, Users, BarChart3, Search,
-  Settings, Building2, Bell, GitCompare, PenLine, BookOpen, FolderKanban,
+  Settings, Building2, Bell, BookOpen, FolderKanban,
   MessageCircleQuestion, GraduationCap,
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { UserButton } from '@clerk/nextjs'
+import type { OrgModuleKey, OrgModuleVisibility } from '@/lib/org-modules'
 
-const navItems = [
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/ai/ask', label: 'Contractvragen', icon: MessageCircleQuestion },
-  { href: '/projects', label: 'Projecten', icon: FolderKanban },
-  { href: '/contracts', label: 'Contracten', icon: FileText },
-  { href: '/suppliers', label: 'Leveranciers', icon: Building2 },
-  { href: '/search', label: 'Zoeken', icon: Search },
-  { href: '/reports', label: 'Rapportages', icon: BarChart3 },
-  { href: '/handleiding', label: 'Handleiding', icon: BookOpen },
+type ModuleNavItem = {
+  href: string
+  label: string
+  icon: LucideIcon
+  key: OrgModuleKey
+}
+
+const navItems: ModuleNavItem[] = [
+  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, key: 'dashboard' },
+  { href: '/ai/ask', label: 'Contractvragen', icon: MessageCircleQuestion, key: 'aiAsk' },
+  { href: '/projects', label: 'Projecten', icon: FolderKanban, key: 'projects' },
+  { href: '/contracts', label: 'Contracten', icon: FileText, key: 'contracts' },
+  { href: '/search', label: 'Zoeken', icon: Search, key: 'search' },
+  { href: '/reports', label: 'Rapportages', icon: BarChart3, key: 'reports' },
+  { href: '/handleiding', label: 'Handleiding', icon: BookOpen, key: 'handleiding' },
 ]
 
-const aiItems = [
-  { href: '/contracts/compare', label: 'Contractvergelijking', icon: GitCompare },
-  { href: '/ai/draft', label: 'Ontwerp-assistent', icon: PenLine },
-  { href: '/training', label: 'Training & e-learning', icon: GraduationCap },
+const aiItems: ModuleNavItem[] = [
+  { href: '/training', label: 'Training & e-learning', icon: GraduationCap, key: 'training' },
 ]
 
 const settingsItems = [
@@ -34,8 +40,10 @@ const settingsItems = [
   { href: '/settings/retention', label: 'Bewaartermijnen', icon: Settings },
 ]
 
-export function Sidebar() {
+export function Sidebar({ moduleVisibility }: { moduleVisibility: OrgModuleVisibility }) {
   const pathname = usePathname()
+  const visibleNavItems = navItems.filter((item) => moduleVisibility[item.key])
+  const visibleAiItems = aiItems.filter((item) => moduleVisibility[item.key])
   return (
     <aside className="fixed left-0 top-0 h-full w-64 bg-slate-900 text-white flex flex-col z-40">
       <div className="p-6 border-b border-slate-700">
@@ -50,7 +58,7 @@ export function Sidebar() {
 
       <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
         <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">Navigatie</div>
-        {navItems.map(({ href, label, icon: Icon }) => (
+        {visibleNavItems.map(({ href, label, icon: Icon }) => (
           <Link
             key={href}
             href={href}
@@ -67,7 +75,7 @@ export function Sidebar() {
         ))}
 
         <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mt-6 mb-3">AI Tools</div>
-        {aiItems.map(({ href, label, icon: Icon }) => (
+        {visibleAiItems.map(({ href, label, icon: Icon }) => (
           <Link
             key={href}
             href={href}

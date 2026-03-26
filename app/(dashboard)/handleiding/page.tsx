@@ -134,7 +134,7 @@ export default async function HandleidingPage() {
               <li>Portfolio-overzicht op het dashboard (lopende contracten, verloop, verplichtingen, meldingen).</li>
               <li>Contracten aanmaken, bewerken, archiveren en verwijderen (soft delete) met uitgebreide metadata.</li>
               <li>Documenten (PDF/DOCX) koppelen aan contracten, inclusief versiebeheer en bulkdownload.</li>
-              <li>AI-ondersteunde analyse, compliance, ontwerp-review en contractvergelijking.</li>
+              <li>AI-ondersteunde analyse, compliance en semantisch zoeken.</li>
               <li>Rapportage en export (CSV/Excel), plus optionele e-mailnotificaties via Resend en geplande jobs.</li>
             </ul>
           </Section>
@@ -243,18 +243,8 @@ export default async function HandleidingPage() {
             </ul>
             <h4>AI Tools</h4>
             <ul>
-              <li>
-                <Link href="/contracts/compare" className="text-blue-600 underline">
-                  Contractvergelijking
-                </Link>{' '}
-                — Twee contracten selecteren; AI genereert verschillen en risico’s.
-              </li>
-              <li>
-                <Link href="/ai/draft" className="text-blue-600 underline">
-                  Ontwerp-assistent
-                </Link>{' '}
-                — Upload een conceptcontract; AI geeft een score, suggesties en ontbrekende clausules.
-              </li>
+              <li><strong>Contractvragen</strong> — Stel vragen over contracten met bronverwijzingen en vervolgvragen.</li>
+              <li><strong>Training & e-learning</strong> — AI-ondersteunde leeromgeving voor contractkennis.</li>
             </ul>
             <h4>Instellingen</h4>
             <ul>
@@ -404,10 +394,7 @@ export default async function HandleidingPage() {
                 <strong>Semantisch zoeken</strong> — Zoekpagina, POST naar AI-search endpoint.
               </li>
               <li>
-                <strong>Contractvergelijking</strong> — Twee contracten kiezen; verschillen en samenvatting.
-              </li>
-              <li>
-                <strong>Ontwerp-assistent</strong> — Review van een geüpload concept met score en suggesties.
+                <strong>Contractvragen</strong> — Vraag-antwoord op contractbronnen met bronverwijzingen.
               </li>
               <li>
                 <strong>Notificaties genereren</strong> — Optioneel AI-ondersteund (indien gebruikt in uw deployment).
@@ -453,7 +440,7 @@ export default async function HandleidingPage() {
                   </tr>
                   <tr>
                     <td className="p-3 font-mono text-xs">OPENAI_API_KEY</td>
-                    <td className="p-3">OpenAI API — voor extractie, analyse, zoeken, vergelijking, ontwerp-assistent.</td>
+                    <td className="p-3">OpenAI API — voor extractie, analyse, zoeken, contractvragen en AI-samenvattingen.</td>
                   </tr>
                   <tr>
                     <td className="p-3 font-mono text-xs">BLOB_READ_WRITE_TOKEN</td>

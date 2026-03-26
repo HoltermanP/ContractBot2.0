@@ -7,6 +7,16 @@ import { fetchReferenceUrlAsText } from '@/lib/fetch-reference-url'
 const MAX_CONTEXT_CONTRACTS = 5
 const MAX_REFERENCE_URLS = 4
 
+function dedupeContractsById(blocks: QaContextBlock[]) {
+  const uniqueById = new Map<string, { id: string; title: string; detail: string }>()
+  for (const block of blocks) {
+    if (!uniqueById.has(block.id)) {
+      uniqueById.set(block.id, { id: block.id, title: block.title, detail: block.detail })
+    }
+  }
+  return [...uniqueById.values()]
+}
+
 export async function POST(req: NextRequest) {
   try {
     const user = await getOrCreateUser()
@@ -75,7 +85,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ...result,
       contextSummary: {
-        contractsUsed: contractBlocks.map((b) => ({ id: b.id, title: b.title, detail: b.detail })),
+        contractsUsed: dedupeContractsById(contractBlocks),
         urlsUsed: urlBlocks.map((b) => ({ url: b.detail })),
       },
     })

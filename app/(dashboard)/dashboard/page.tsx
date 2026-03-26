@@ -123,18 +123,20 @@ export default async function DashboardPage() {
       </Card>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {kpis.map(({ title, value, icon: Icon, color, bg }) => (
           <Card key={title}>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-3">
-                <div className={`p-2 rounded-lg ${bg}`}>
+            <CardContent className="pt-5">
+              <div className="space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className={`rounded-lg p-2 shrink-0 ${bg}`}>
                   <Icon className={`h-5 w-5 ${color}`} />
+                  </div>
+                  <div className="text-right">
+                    <div className="text-2xl font-bold tabular-nums sm:text-3xl">{value}</div>
+                  </div>
                 </div>
-                <div>
-                  <div className="text-2xl font-bold">{value}</div>
-                  <div className="text-xs text-muted-foreground">{title}</div>
-                </div>
+                <div className="text-sm leading-snug text-muted-foreground">{title}</div>
               </div>
             </CardContent>
           </Card>

@@ -3,7 +3,8 @@ import { redirect } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { CreateOrgForm } from './create-org-form'
 import { InviteMemberForm } from './invite-member-form'
-import { canManageUsers } from '@/lib/permissions'
+import { canManageOrgSettings, canManageUsers } from '@/lib/permissions'
+import { ModulesVisibilityForm } from './modules-visibility-form'
 
 export default async function OrganizationsSettingsPage() {
   const user = await getOrCreateUser()
@@ -43,6 +44,20 @@ export default async function OrganizationsSettingsPage() {
           </CardHeader>
           <CardContent>
             <InviteMemberForm orgId={user.orgId} />
+          </CardContent>
+        </Card>
+      )}
+
+      {canManageOrgSettings(user.role) && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Modulebeschikbaarheid</CardTitle>
+            <CardDescription>
+              Beheer welke modules en pagina&apos;s beschikbaar zijn binnen de actieve organisatie.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ModulesVisibilityForm />
           </CardContent>
         </Card>
       )}

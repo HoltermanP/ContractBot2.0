@@ -3,8 +3,14 @@ import { getOrCreateUser } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { contracts, contractDocuments, notificationRules } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
-import { openai } from '@/lib/openai'
+import { CLAUDE_MODELS, createClaudeJsonCompletion } from '@/lib/openai'
 import { pickDocumentWithAiExtract } from '@/lib/pick-contract-document'
+
+type NotificationRuleDraft = {
+  triggerType: 'days_before_end' | 'days_before_option' | 'obligation_due' | 'budget_threshold'
+  triggerValue: number
+  channel?: 'both' | 'email' | 'dashboard'
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -24,14 +30,9 @@ export async function POST(req: NextRequest) {
 
     if (!extraction) return NextResponse.json({ error: 'Geen AI-extractie beschikbaar' }, { status: 400 })
 
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      user: `org_${user.orgId}`,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'system',
-          content: `Genereer notificatieregels op basis van contractgegevens. Antwoord in het Nederlands als JSON:
+    const result = await createClaudeJsonCompletion<{ rules?: NotificationRuleDraft[] }>({
+      model: CLAUDE_MODELS.complexAnswer,
+      system: `Genereer notificatieregels op basis van contractgegevens. Antwoord in het Nederlands als JSON:
 {
   "rules": [
     {
@@ -42,25 +43,17 @@ export async function POST(req: NextRequest) {
     }
   ]
 }`,
-        },
-        {
-          role: 'user',
-          content: `Contract: ${JSON.stringify({
-            title: contract.title,
-            end_date: contract.endDate,
-            option_date: contract.optionDate,
-            auto_renewal: contract.autoRenewal,
-            notice_period_days: contract.noticePeriodDays,
-            obligations: extraction.obligations?.length ?? 0,
-            implicit_renewal_warning: extraction.implicit_renewal_warning,
-          })}`,
-        },
-      ],
+      user: `Organisatie: org_${user.orgId}\nContract: ${JSON.stringify({
+        title: contract.title,
+        end_date: contract.endDate,
+        option_date: contract.optionDate,
+        auto_renewal: contract.autoRenewal,
+        notice_period_days: contract.noticePeriodDays,
+        obligations: extraction.obligations?.length ?? 0,
+        implicit_renewal_warning: extraction.implicit_renewal_warning,
+      })}`,
     })
-
-    const content = response.choices[0]?.message?.content
-    if (!content) throw new Error('Geen respons')
-    const { rules } = JSON.parse(content)
+    const { rules } = result
 
     let created = 0
     for (const rule of rules ?? []) {

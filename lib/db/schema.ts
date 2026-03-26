@@ -4,16 +4,19 @@ import {
   text,
   varchar,
   integer,
+  smallint,
   boolean,
+  date,
   timestamp,
   decimal,
   jsonb,
+  uuid,
   vector,
   index,
   uniqueIndex,
   primaryKey,
 } from 'drizzle-orm/pg-core'
-import { relations } from 'drizzle-orm'
+import { relations, sql } from 'drizzle-orm'
 
 // Enums
 export const userRoleEnum = pgEnum('user_role', ['admin', 'registrator', 'manager', 'compliance', 'reader'])
@@ -88,6 +91,108 @@ export const projects = pgTable(
     orgIdx: index('projects_org_id_idx').on(table.orgId),
   })
 )
+
+// Generic contract management hierarchy (new model)
+export const organisation = pgTable('organisation', {
+  id: uuid('id').default(sql`gen_random_uuid()`).primaryKey(),
+  name: text('name').notNull(),
+  slug: text('slug').notNull().unique(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+})
+
+export const programme = pgTable('programme', {
+  id: uuid('id').default(sql`gen_random_uuid()`).primaryKey(),
+  organisationId: uuid('organisation_id')
+    .notNull()
+    .references(() => organisation.id),
+  name: text('name').notNull(),
+  status: text('status').notNull().default('active'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+})
+
+export const project = pgTable('project', {
+  id: uuid('id').default(sql`gen_random_uuid()`).primaryKey(),
+  organisationId: uuid('organisation_id')
+    .notNull()
+    .references(() => organisation.id),
+  programmeId: uuid('programme_id').references(() => programme.id),
+  name: text('name').notNull(),
+  status: text('status').notNull().default('active'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+})
+
+export const contract = pgTable('contract', {
+  id: uuid('id').default(sql`gen_random_uuid()`).primaryKey(),
+  reference: text('reference').notNull().unique(),
+  contractType: text('contract_type').notNull(),
+  status: text('status').notNull().default('concept'),
+  startDate: date('start_date'),
+  endDate: date('end_date'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+})
+
+export const contractProject = pgTable(
+  'contract_project',
+  {
+    contractId: uuid('contract_id')
+      .notNull()
+      .references(() => contract.id),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => project.id),
+    role: text('role').notNull().default('lead'),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.contractId, table.projectId] }),
+  })
+)
+
+export const contractVersion = pgTable(
+  'contract_version',
+  {
+    id: uuid('id').default(sql`gen_random_uuid()`).primaryKey(),
+    contractId: uuid('contract_id')
+      .notNull()
+      .references(() => contract.id),
+    versionNumber: integer('version_number').notNull().default(1),
+    label: text('label'),
+    validFrom: date('valid_from'),
+    isCurrent: boolean('is_current').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  },
+  (table) => ({
+    contractVersionUnique: uniqueIndex('contract_version_contract_id_version_number_uq').on(
+      table.contractId,
+      table.versionNumber
+    ),
+  })
+)
+
+export const contractDocumentNode = pgTable('contract_document', {
+  id: uuid('id').default(sql`gen_random_uuid()`).primaryKey(),
+  contractVersionId: uuid('contract_version_id')
+    .notNull()
+    .references(() => contractVersion.id),
+  docType: text('doc_type').notNull(),
+  title: text('title').notNull(),
+  sortOrder: integer('sort_order').notNull().default(0),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+})
+
+export const contractClause = pgTable('contract_clause', {
+  id: uuid('id').default(sql`gen_random_uuid()`).primaryKey(),
+  contractDocumentId: uuid('contract_document_id')
+    .notNull()
+    .references(() => contractDocumentNode.id),
+  clauseType: text('clause_type').notNull(),
+  ownerParty: text('owner_party'),
+  dueDate: date('due_date'),
+  status: text('status').notNull().default('open'),
+  content: text('content'),
+  aiLabel: text('ai_label'),
+  aiRiskScore: smallint('ai_risk_score'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+})
 
 // Suppliers
 export const suppliers = pgTable('suppliers', {
@@ -395,6 +500,52 @@ export const organizationMembersRelations = relations(organizationMembers, ({ on
 export const projectsRelations = relations(projects, ({ one, many }) => ({
   organization: one(organizations, { fields: [projects.orgId], references: [organizations.id] }),
   contracts: many(contracts),
+}))
+
+export const organisationRelations = relations(organisation, ({ many }) => ({
+  programmes: many(programme),
+  projects: many(project),
+}))
+
+export const programmeRelations = relations(programme, ({ one, many }) => ({
+  organisation: one(organisation, { fields: [programme.organisationId], references: [organisation.id] }),
+  projects: many(project),
+}))
+
+export const projectRelations = relations(project, ({ one, many }) => ({
+  organisation: one(organisation, { fields: [project.organisationId], references: [organisation.id] }),
+  programme: one(programme, { fields: [project.programmeId], references: [programme.id] }),
+  contractProjects: many(contractProject),
+}))
+
+export const contractRelationsNew = relations(contract, ({ many }) => ({
+  contractProjects: many(contractProject),
+  versions: many(contractVersion),
+}))
+
+export const contractProjectRelations = relations(contractProject, ({ one }) => ({
+  contract: one(contract, { fields: [contractProject.contractId], references: [contract.id] }),
+  project: one(project, { fields: [contractProject.projectId], references: [project.id] }),
+}))
+
+export const contractVersionRelations = relations(contractVersion, ({ one, many }) => ({
+  contract: one(contract, { fields: [contractVersion.contractId], references: [contract.id] }),
+  documents: many(contractDocumentNode),
+}))
+
+export const contractDocumentNodeRelations = relations(contractDocumentNode, ({ one, many }) => ({
+  contractVersion: one(contractVersion, {
+    fields: [contractDocumentNode.contractVersionId],
+    references: [contractVersion.id],
+  }),
+  clauses: many(contractClause),
+}))
+
+export const contractClauseRelations = relations(contractClause, ({ one }) => ({
+  document: one(contractDocumentNode, {
+    fields: [contractClause.contractDocumentId],
+    references: [contractDocumentNode.id],
+  }),
 }))
 
 export const contractsRelations = relations(contracts, ({ one, many }) => ({

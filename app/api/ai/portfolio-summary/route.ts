@@ -3,7 +3,7 @@ import { getOrCreateUser } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { contracts, contractObligations } from '@/lib/db/schema'
 import { eq, and, lt, gte } from 'drizzle-orm'
-import { openai } from '@/lib/openai'
+import { CLAUDE_MODELS, createClaudeJsonCompletion } from '@/lib/openai'
 
 export async function POST(req: NextRequest) {
   try {
@@ -47,14 +47,15 @@ export async function POST(req: NextRequest) {
       })),
     }
 
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      user: `org_${user.orgId}`,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'system',
-          content: `Je bent een contractmanagement consultant. Maak een managementsamenvatting van het contractportfolio op basis van de aangeleverde statistieken.
+    const summary = await createClaudeJsonCompletion<{
+      samenvatting: string
+      hoogtepunten: string[]
+      aandachtspunten: string[]
+      aanbevelingen: string[]
+      risicoprofiel: 'laag' | 'middel' | 'hoog'
+    }>({
+      model: CLAUDE_MODELS.complexAnswer,
+      system: `Je bent een contractmanagement consultant. Maak een managementsamenvatting van het contractportfolio op basis van de aangeleverde statistieken.
 Antwoord in het Nederlands als JSON:
 {
   "samenvatting": string (3-5 zinnen managementsamenvatting),
@@ -63,17 +64,8 @@ Antwoord in het Nederlands als JSON:
   "aanbevelingen": [string] (max 3 concrete aanbevelingen),
   "risicoprofiel": "laag"|"middel"|"hoog"
 }`,
-        },
-        {
-          role: 'user',
-          content: `Maak een samenvatting van dit contractportfolio:\n${JSON.stringify(portfolioData, null, 2)}`,
-        },
-      ],
+      user: `Organisatie: org_${user.orgId}\nMaak een samenvatting van dit contractportfolio:\n${JSON.stringify(portfolioData, null, 2)}`,
     })
-
-    const content = response.choices[0]?.message?.content
-    if (!content) throw new Error('Geen respons van AI')
-    const summary = JSON.parse(content)
     return NextResponse.json({ ...summary, stats: portfolioData })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })

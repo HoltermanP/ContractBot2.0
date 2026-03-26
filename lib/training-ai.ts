@@ -1,4 +1,4 @@
-import { openai } from '@/lib/openai'
+import { CLAUDE_MODELS, createClaudeJsonCompletion } from '@/lib/openai'
 
 export type QuizQuestion = {
   question: string
@@ -25,14 +25,9 @@ export async function generateExtendedContractTraining(
   const parts = sourceBlocks.map((b, i) => `--- Bron ${i + 1}: ${b.label} ---\n${b.text}`)
   const joined = parts.join('\n\n')
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    user: `org_${orgId}`,
-    response_format: { type: 'json_object' },
-    messages: [
-      {
-        role: 'system',
-        content: `Je bent een senior expert in contracten en didactiek. Maak een uitgebreide e-learningtraining voor professionals op basis van de aangeleverde contractdocumenten (inclusief addenda/bijlagen als die in de tekst zitten).
+  const parsed = await createClaudeJsonCompletion<GeneratedCourse>({
+    model: CLAUDE_MODELS.complexAnswer,
+    system: `Je bent een senior expert in contracten en didactiek. Maak een uitgebreide e-learningtraining voor professionals op basis van de aangeleverde contractdocumenten (inclusief addenda/bijlagen als die in de tekst zitten).
 
 Eisen:
 - Taal: Nederlands.
@@ -60,17 +55,8 @@ JSON-schema:
     }
   ]
 }`,
-      },
-      {
-        role: 'user',
-        content: `Contractbronnen voor de training:\n\n${joined.slice(0, 120_000)}`,
-      },
-    ],
+    user: `Organisatie: org_${orgId}\nContractbronnen voor de training:\n\n${joined.slice(0, 120_000)}`,
   })
-
-  const content = response.choices[0]?.message?.content
-  if (!content) throw new Error('Geen respons van OpenAI')
-  const parsed = JSON.parse(content) as GeneratedCourse
   if (!parsed.modules?.length) throw new Error('Geen modules gegenereerd')
   return parsed
 }

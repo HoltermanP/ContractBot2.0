@@ -3,7 +3,7 @@ import { getOrCreateUser } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { contracts } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
-import { openai } from '@/lib/openai'
+import { CLAUDE_MODELS, createClaudeJsonCompletion } from '@/lib/openai'
 import { loadContractCorpusPlainTextForAnalysis } from '@/lib/contract-corpus'
 
 export async function POST(req: NextRequest) {
@@ -22,14 +22,9 @@ export async function POST(req: NextRequest) {
     const text = await loadContractCorpusPlainTextForAnalysis(contractId)
     if (!text.trim()) return NextResponse.json({ error: 'Geen document beschikbaar voor analyse' }, { status: 400 })
 
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      user: `org_${user.orgId}`,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'system',
-          content: `Je bent een compliance-expert gespecialiseerd in ISO 27001, AVG/GDPR en duurzaamheidsregelgeving voor overheidscontracten.
+    const result = await createClaudeJsonCompletion({
+      model: CLAUDE_MODELS.complexAnswer,
+      system: `Je bent een compliance-expert gespecialiseerd in ISO 27001, AVG/GDPR en duurzaamheidsregelgeving voor overheidscontracten.
 Analyseer het contract op naleving van relevante wet- en regelgeving. Antwoord ALLEEN in het Nederlands als JSON:
 {
   "overallCompliance": "voldoet"|"gedeeltelijk"|"voldoet_niet"|"niet_van_toepassing",
@@ -57,17 +52,9 @@ Evalueer minimaal de volgende frameworks indien relevant:
 - AVG/GDPR (gegevensbescherming, verwerkersovereenkomst, bewaartermijnen)
 - ISO 27001 (informatiebeveiliging, toegangscontrole, incidentbeheer)
 - Duurzaamheid/MVO (CO2-reductie, sociale voorwaarden, circulair inkopen)`,
-        },
-        {
-          role: 'user',
-          content: `Analyseer dit contract op compliance:\n\nType: ${contract.contractType ?? 'onbekend'}\n\n${text.slice(0, 30000)}`,
-        },
-      ],
+      user: `Organisatie: org_${user.orgId}\nAnalyseer dit contract op compliance:\n\nType: ${contract.contractType ?? 'onbekend'}\n\n${text.slice(0, 30000)}`,
     })
-
-    const content = response.choices[0]?.message?.content
-    if (!content) throw new Error('Geen respons van AI')
-    return NextResponse.json(JSON.parse(content))
+    return NextResponse.json(result)
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
   }

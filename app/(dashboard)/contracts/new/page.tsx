@@ -1,10 +1,11 @@
 import { getOrCreateUser, requireRole } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { suppliers, customFields, organizationMembers, projects } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { redirect } from 'next/navigation'
 import { ContractForm } from '../contract-form'
 import { ensureDefaultProjectForOrg } from '@/lib/org'
+import { project } from '@/lib/db'
+import { z } from 'zod'
 
 export default async function NewContractPage({
   searchParams,
@@ -15,24 +16,17 @@ export default async function NewContractPage({
   const user = await getOrCreateUser()
   if (!user) redirect('/sign-in')
 
-  await ensureDefaultProjectForOrg(user.orgId)
+  const parsedOrgId = z.string().uuid().safeParse(user.orgId)
+  if (!parsedOrgId.success) redirect('/dashboard')
+
+  await ensureDefaultProjectForOrg(parsedOrgId.data)
 
   const { project: projectFromUrl } = await searchParams
 
-  const [allSuppliers, memberRows, orgCustomFields, allProjects] = await Promise.all([
-    db.query.suppliers.findMany({ where: eq(suppliers.orgId, user.orgId) }),
-    db.query.organizationMembers.findMany({
-      where: eq(organizationMembers.orgId, user.orgId!),
-      with: { user: true },
-    }),
-    db.query.customFields.findMany({ where: eq(customFields.orgId, user.orgId) }),
-    db.query.projects.findMany({
-      where: eq(projects.orgId, user.orgId),
+  const allProjects = await db.query.project.findMany({
+      where: eq(project.organisationId, parsedOrgId.data),
       orderBy: (p, { asc }) => [asc(p.name)],
-    }),
-  ])
-
-  const allUsers = memberRows.map((m) => m.user).filter((u): u is NonNullable<typeof u> => !!u)
+    })
   const initialProject =
     projectFromUrl && allProjects.some((p) => p.id === projectFromUrl) ? projectFromUrl : allProjects[0]?.id ?? ''
 
@@ -43,11 +37,11 @@ export default async function NewContractPage({
         <p className="text-muted-foreground">Vul de contractgegevens in of upload een document voor automatische extractie</p>
       </div>
       <ContractForm
-        suppliers={allSuppliers}
-        users={allUsers}
+        suppliers={[]}
+        users={[]}
         projects={allProjects}
         currentUser={user}
-        customFields={orgCustomFields}
+        customFields={[]}
         initialData={{ projectId: initialProject }}
       />
     </div>

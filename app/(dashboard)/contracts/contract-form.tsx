@@ -129,7 +129,7 @@ export function ContractForm({
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Fout')
       toast({ title: contractId ? 'Contract bijgewerkt' : 'Contract aangemaakt' })
-      router.push(`/contracts/${json.id ?? contractId}`)
+      router.push(`/contracts/${json.data?.id ?? json.id ?? contractId}`)
       router.refresh()
     } catch (err: any) {
       toast({ title: err.message, variant: 'destructive' })
@@ -217,24 +217,28 @@ export function ContractForm({
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1">
-            <Label>Leverancier</Label>
-            <Select value={data.supplierId} onValueChange={v => set('supplierId', v)}>
-              <SelectTrigger><SelectValue placeholder="Selecteer leverancier" /></SelectTrigger>
-              <SelectContent>
-                {suppliers.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <Label>Eigenaar</Label>
-            <Select value={data.ownerUserId} onValueChange={v => set('ownerUserId', v)}>
-              <SelectTrigger><SelectValue placeholder="Selecteer eigenaar" /></SelectTrigger>
-              <SelectContent>
-                {users.map(u => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
+          {suppliers.length > 0 && (
+            <div className="space-y-1">
+              <Label>Leverancier</Label>
+              <Select value={data.supplierId || undefined} onValueChange={v => set('supplierId', v)}>
+                <SelectTrigger><SelectValue placeholder="Selecteer leverancier" /></SelectTrigger>
+                <SelectContent>
+                  {suppliers.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {users.length > 0 && (
+            <div className="space-y-1">
+              <Label>Eigenaar</Label>
+              <Select value={data.ownerUserId || undefined} onValueChange={v => set('ownerUserId', v)}>
+                <SelectTrigger><SelectValue placeholder="Selecteer eigenaar" /></SelectTrigger>
+                <SelectContent>
+                  {users.map(u => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </CardContent>
       </Card>
 
