@@ -1,21 +1,42 @@
 /**
  * Testdata seed script voor AI-Contractbot
- * Gebruik: npx tsx scripts/seed.ts
+ * Gebruik: npm run db:seed
+ *
+ * Compacte set: 10 contracten, 3 projecten, 10 leveranciers; per contract 3 PDF’s (Blob met token).
+ *
+ * Vereist: DATABASE_URL in .env.local
+ * Optioneel: BLOB_READ_WRITE_TOKEN — uploadt per document naar seed/docs/<contractnummer>/<bestand>.pdf (private).
+ * PDF-inhoud: Nederlandstalige contracttekst gegenereerd per contract (geen W3C-demo’s).
  */
 import { loadEnvConfig } from '@next/env'
 loadEnvConfig(process.cwd())
 
+import { put } from '@vercel/blob'
+import { buildSeedContractPdfBuffer } from './seed-contract-pdf'
 import { neon } from '@neondatabase/serverless'
 import { drizzle } from 'drizzle-orm/neon-http'
 import * as schema from '../lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 
-/** Publieke demo-PDF (W3C testbestand) — bruikbaar voor download in de UI */
+/** Fallback-URL zonder Blob-token (inhoud wijkt af van gegenereerde seed-PDF). */
 const DEMO_PDF_URL = 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'
-const DEMO_PDF_URL_ALT = 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
 
 const sql = neon(process.env.DATABASE_URL!)
 const db = drizzle(sql, { schema })
+
+function blobSafeSegment(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/_+/g, '_').slice(0, 180)
+}
+
+async function putSeedPdfBuffer(token: string, pathname: string, buf: Buffer): Promise<{ url: string; size: number }> {
+  const created = await put(pathname, buf, {
+    access: 'private',
+    contentType: 'application/pdf',
+    token,
+    allowOverwrite: true,
+  })
+  return { url: created.url, size: buf.length }
+}
 
 async function clearAllData() {
   console.log('🧹 Bestaande data verwijderen...')
@@ -89,17 +110,16 @@ async function seed() {
   }
 
   const createdProjects: typeof schema.projects.$inferSelect[] = [mainProject]
-  const projectThemes = [
-    'Onderwijs', 'Onderzoek', 'ICT', 'Facilitair', 'Finance', 'HR', 'Juridisch',
-    'Inkoop', 'Huisvesting', 'Security', 'Data', 'Innovatie',
-  ]
-  for (let i = 1; i <= 35; i++) {
+  for (const extra of [
+    { name: 'Project ICT & digitale dienstverlening', description: 'Testproject voor ICT-contracten' },
+    { name: 'Project Facility & huisvesting', description: 'Testproject voor facilitaire contracten' },
+  ]) {
     const [project] = await db
       .insert(schema.projects)
       .values({
         orgId: org.id,
-        name: `Project ${i.toString().padStart(2, '0')} - ${projectThemes[i % projectThemes.length]}`,
-        description: `Testproject ${i} voor bredere contractportefeuille`,
+        name: extra.name,
+        description: extra.description,
       })
       .returning()
     createdProjects.push(project)
@@ -173,25 +193,9 @@ async function seed() {
     console.log(`✓ Leverancier: ${s.name}`)
   }
 
-  const [microsoft, capgemini, exact, facility, nedap, konica, siemens, adobe, cisco, aws] = createdSuppliers
+  const [microsoft, capgemini, exact, facility, nedap, konica, _siemens, adobe] = createdSuppliers
 
-  // Extra leveranciers voor ruime testdataset
-  for (let i = 1; i <= 40; i++) {
-    const [supplier] = await db
-      .insert(schema.suppliers)
-      .values({
-        orgId: org.id,
-        name: `Test Leverancier ${i.toString().padStart(2, '0')} B.V.`,
-        kvk: `99${i.toString().padStart(6, '0')}`,
-        contactEmail: `inkoop+leverancier${i}@universiteitleiden.nl`,
-        contactName: `Contactpersoon ${i}`,
-      })
-      .returning()
-    createdSuppliers.push(supplier)
-  }
-  console.log('✓ 40 extra leveranciers toegevoegd')
-
-  // ── Contracten ───────────────────────────────────────────────
+  // ── Contracten (compacte testset: 10 stuks) ──────────────────
   const now = new Date()
   const d = (offsetDays: number) => new Date(now.getTime() + offsetDays * 86400000)
 
@@ -298,22 +302,6 @@ async function seed() {
       retentionYears: 7,
     },
     {
-      title: 'Siemens Gebouwbeheer & Klimaatinstallaties',
-      contractNumber: 'UL-2020-INF-002',
-      status: 'verlopen' as const,
-      contractType: 'Dienstverleningscontract',
-      supplierId: siemens.id,
-      ownerUserId: manager.id,
-      startDate: d(-1460),
-      endDate: d(-30),
-      noticePeriodDays: 180,
-      valueTotal: '2000000',
-      valueAnnual: '400000',
-      currency: 'EUR',
-      autoRenewal: false,
-      retentionYears: 10,
-    },
-    {
       title: 'NDA Onderzoekssamenwerking Industrie',
       contractNumber: 'UL-2024-JUR-011',
       status: 'actief' as const,
@@ -347,40 +335,6 @@ async function seed() {
       retentionYears: 7,
     },
     {
-      title: 'Schoonmaakdiensten Academisch Gebouw',
-      contractNumber: 'UL-2022-FAC-003',
-      status: 'gearchiveerd' as const,
-      contractType: 'Dienstverleningscontract',
-      supplierId: facility.id,
-      ownerUserId: registrator.id,
-      startDate: d(-730),
-      endDate: d(-180),
-      noticePeriodDays: 60,
-      valueTotal: '280000',
-      valueAnnual: '140000',
-      currency: 'EUR',
-      autoRenewal: false,
-      retentionYears: 7,
-      archivedAt: d(-170),
-      archivedBy: admin.id,
-    },
-    {
-      title: 'Concept: Nieuwe Datacenter Overeenkomst 2025',
-      contractNumber: 'UL-2025-ICT-001',
-      status: 'concept' as const,
-      contractType: 'Leveringscontract',
-      supplierId: capgemini.id,
-      ownerUserId: registrator.id,
-      startDate: d(30),
-      endDate: d(1095),
-      noticePeriodDays: 180,
-      valueTotal: '900000',
-      valueAnnual: '300000',
-      currency: 'EUR',
-      autoRenewal: false,
-      retentionYears: 10,
-    },
-    {
       title: 'Adobe Creative Cloud for Enterprise',
       contractNumber: 'UL-2024-ICT-018',
       status: 'actief' as const,
@@ -398,115 +352,17 @@ async function seed() {
       retentionYears: 7,
     },
     {
-      title: 'Cisco Netwerk & Security Hardware-onderhoud',
-      contractNumber: 'UL-2023-ICT-014',
-      status: 'actief' as const,
-      contractType: 'Onderhoudscontract',
-      supplierId: cisco.id,
-      ownerUserId: manager.id,
-      startDate: d(-400),
-      endDate: d(140),
-      noticePeriodDays: 90,
-      valueTotal: '310000',
-      valueAnnual: '155000',
-      currency: 'EUR',
-      autoRenewal: false,
-      retentionYears: 7,
-    },
-    {
-      title: 'AWS Cloud Services Enterprise Agreement',
-      contractNumber: 'UL-2024-ICT-022',
-      status: 'actief' as const,
-      contractType: 'Cloud SLA',
-      supplierId: aws.id,
-      ownerUserId: manager.id,
-      startDate: d(-200),
-      endDate: d(530),
-      optionDate: d(480),
-      noticePeriodDays: 90,
-      valueTotal: '1800000',
-      valueAnnual: '600000',
-      currency: 'EUR',
-      autoRenewal: true,
-      autoRenewalTerms: 'Verlenging in lijn met AWS Enterprise Agreement',
-      retentionYears: 10,
-    },
-    {
-      title: 'Atlassian Cloud (Jira & Confluence) — implementatiepartner',
-      contractNumber: 'UL-2023-ICT-016',
-      status: 'actief' as const,
-      contractType: 'Dienstverleningscontract',
+      title: 'Concept: Nieuwe Datacenter Overeenkomst 2025',
+      contractNumber: 'UL-2025-ICT-001',
+      status: 'concept' as const,
+      contractType: 'Leveringscontract',
       supplierId: capgemini.id,
       ownerUserId: registrator.id,
-      startDate: d(-500),
-      endDate: d(230),
-      noticePeriodDays: 60,
-      valueTotal: '195000',
-      valueAnnual: '65000',
-      currency: 'EUR',
-      autoRenewal: false,
-      retentionYears: 7,
-    },
-    {
-      title: 'Back-up & disaster recovery managed services',
-      contractNumber: 'UL-2022-ICT-019',
-      status: 'actief' as const,
-      contractType: 'SLA',
-      supplierId: capgemini.id,
-      ownerUserId: manager.id,
-      startDate: d(-820),
-      endDate: d(100),
-      noticePeriodDays: 90,
-      valueTotal: '480000',
-      valueAnnual: '160000',
-      currency: 'EUR',
-      autoRenewal: true,
-      retentionYears: 7,
-    },
-    {
-      title: 'Telefonie & unified communications (Microsoft Teams Phone)',
-      contractNumber: 'UL-2024-ICT-024',
-      status: 'actief' as const,
-      contractType: 'Leveringscontract',
-      supplierId: microsoft.id,
-      ownerUserId: registrator.id,
-      startDate: d(-90),
-      endDate: d(640),
-      noticePeriodDays: 60,
-      valueTotal: '275000',
-      valueAnnual: '55000',
-      currency: 'EUR',
-      autoRenewal: false,
-      retentionYears: 7,
-    },
-    {
-      title: 'Beveiligingscamera’s & videobewaking campus (Nedap uitbreiding)',
-      contractNumber: 'UL-2024-SEC-008',
-      status: 'actief' as const,
-      contractType: 'Leveringscontract',
-      supplierId: nedap.id,
-      ownerUserId: manager.id,
-      startDate: d(-60),
-      endDate: d(700),
-      noticePeriodDays: 90,
-      valueTotal: '125000',
-      valueAnnual: '25000',
-      currency: 'EUR',
-      autoRenewal: false,
-      retentionYears: 7,
-    },
-    {
-      title: 'Waterstof- en energiebeheer pilot — Siemens (afgelopen)',
-      contractNumber: 'UL-2019-INF-005',
-      status: 'verlopen' as const,
-      contractType: 'Onderzoekscontract',
-      supplierId: siemens.id,
-      ownerUserId: admin.id,
-      startDate: d(-2000),
-      endDate: d(-400),
-      noticePeriodDays: 120,
-      valueTotal: '150000',
-      valueAnnual: '50000',
+      startDate: d(30),
+      endDate: d(1095),
+      noticePeriodDays: 180,
+      valueTotal: '900000',
+      valueAnnual: '300000',
       currency: 'EUR',
       autoRenewal: false,
       retentionYears: 10,
@@ -558,190 +414,110 @@ async function seed() {
     console.log(`✓ Contract: ${contract.title}`)
   }
 
-  // Bulkcontracten: extra volume voor dashboard, filters en AI-tests
-  const bulkStatuses: Array<typeof schema.contracts.$inferInsert.status> = ['actief', 'concept', 'verlopen', 'gearchiveerd']
-  const bulkTypes = ['SLA', 'Dienstverleningscontract', 'Leveringscontract', 'Raamovereenkomst', 'Licentieovereenkomst']
+  const blobToken = process.env.BLOB_READ_WRITE_TOKEN?.trim() || null
 
-  for (let i = 1; i <= 320; i++) {
-    const supplier = createdSuppliers[(i * 7) % createdSuppliers.length]
-    const project = createdProjects[(i * 5) % createdProjects.length]
-    const owner = i % 3 === 0 ? admin : i % 2 === 0 ? manager : registrator
-    const status = bulkStatuses[i % bulkStatuses.length]
-    const startDate = d(-(1200 - i * 6))
-    const endDate = status === 'concept' ? d(120 + i) : d(-90 + i * 8)
-    const retentionYears = 5 + (i % 6)
-    const archivedAt = status === 'gearchiveerd' ? d(-(20 + i)) : null
-    const archivedBy = status === 'gearchiveerd' ? admin.id : null
-    const valueAnnual = 15000 + i * 1750
-    const valueTotal = valueAnnual * (2 + (i % 4))
-    const [contract] = await db
-      .insert(schema.contracts)
-      .values({
-        orgId: org.id,
-        projectId: project.id,
-        title: `Testcontract ${i.toString().padStart(3, '0')} — ${supplier.name}`,
-        contractNumber: `UL-TST-2026-${i.toString().padStart(3, '0')}`,
-        status,
-        contractType: bulkTypes[i % bulkTypes.length],
-        supplierId: supplier.id,
-        ownerUserId: owner.id,
-        startDate,
-        endDate,
-        optionDate: status === 'actief' ? d(30 + i * 2) : null,
-        noticePeriodDays: 30 + (i % 6) * 15,
-        valueTotal: String(valueTotal),
-        valueAnnual: String(valueAnnual),
-        currency: 'EUR',
-        autoRenewal: i % 2 === 0,
-        autoRenewalTerms: i % 2 === 0 ? 'Automatische verlenging met 12 maanden' : null,
-        retentionYears,
-        destructionDate: new Date(endDate.getTime() + retentionYears * 365 * 86400000),
-        createdBy: admin.id,
-        updatedAt: new Date(),
-        archivedAt,
-        archivedBy,
-      })
-      .returning()
-    createdContracts.push(contract)
+  if (blobToken) {
+    console.log('📤 Vercel Blob: per document uploaden (private), realistische contract-PDF’s onder seed/docs/<contract>/ …')
+  } else {
+    console.log('ℹ Geen BLOB_READ_WRITE_TOKEN — file_url wijst naar fallback demo-PDF; gegenereerde grootte blijft wel logisch')
   }
-  console.log('✓ 320 extra bulkcontracten toegevoegd')
 
-  const contractByNumber = new Map(
-    createdContracts
-      .filter((c) => c.contractNumber)
-      .map((c) => [c.contractNumber!, c]),
-  )
-
-  // ── Contractdocumenten (PDF’s als externe demo-URL’s) ────────
-  const documentsSeed: {
-    contractNumber: string
-    filename: string
-    fileUrl: string
-    fileType: string
-    fileSize: number
+  // ── Contractdocumenten: per contract een paar PDF’s (Blob = eigen pad per bestand) ──
+  const docSpecsPerContract: Array<{
+    suffix: string
+    seedDocKind: 'main' | 'annex' | 'order'
+    documentKind: 'hoofdcontract' | 'addendum'
     versionNumber: number
-    isCurrent: boolean
-    aiProcessed?: boolean
-    aiExtractedDataJson?: Record<string, unknown>
-    uploadedDaysAgo: number
-    uploadedByUser: typeof admin
-    documentKind?: 'hoofdcontract' | 'addendum'
-  }[] = [
-    { contractNumber: 'UL-2023-ICT-001', filename: 'Microsoft-365-EA-2023-ondertekend.pdf', fileUrl: DEMO_PDF_URL, fileType: 'application/pdf', fileSize: 284_912, versionNumber: 1, isCurrent: true, aiProcessed: true, aiExtractedDataJson: { leverancier: 'Microsoft', type: 'Enterprise Agreement', taal: 'nl' }, uploadedDaysAgo: 120, uploadedByUser: registrator },
-    { contractNumber: 'UL-2023-ICT-001', filename: 'Bijlage-DPA-M365.pdf', fileUrl: DEMO_PDF_URL_ALT, fileType: 'application/pdf', fileSize: 512_000, versionNumber: 2, isCurrent: true, aiProcessed: true, uploadedDaysAgo: 45, uploadedByUser: manager, documentKind: 'addendum' },
-    { contractNumber: 'UL-2022-ICT-004', filename: 'Capgemini-SLA-dienstverlening.pdf', fileUrl: DEMO_PDF_URL, fileType: 'application/pdf', fileSize: 1_024_000, versionNumber: 1, isCurrent: true, aiProcessed: true, uploadedDaysAgo: 200, uploadedByUser: registrator },
-    { contractNumber: 'UL-2022-ICT-004', filename: 'Bijlage-pen-test-Q4.pdf', fileUrl: DEMO_PDF_URL_ALT, fileType: 'application/pdf', fileSize: 198_000, versionNumber: 2, isCurrent: true, aiProcessed: false, uploadedDaysAgo: 12, uploadedByUser: manager, documentKind: 'addendum' },
-    { contractNumber: 'UL-2024-FIN-002', filename: 'Exact-ERP-licentie-2024.pdf', fileUrl: DEMO_PDF_URL, fileType: 'application/pdf', fileSize: 445_200, versionNumber: 1, isCurrent: true, aiProcessed: true, uploadedDaysAgo: 60, uploadedByUser: registrator },
-    { contractNumber: 'UL-2024-FAC-001', filename: 'Raamcontract-facilitair-2024.pdf', fileUrl: DEMO_PDF_URL, fileType: 'application/pdf', fileSize: 890_000, versionNumber: 1, isCurrent: true, aiProcessed: true, uploadedDaysAgo: 300, uploadedByUser: registrator },
-    { contractNumber: 'UL-2021-SEC-003', filename: 'Nedap-AEOS-overeenkomst.pdf', fileUrl: DEMO_PDF_URL_ALT, fileType: 'application/pdf', fileSize: 620_000, versionNumber: 1, isCurrent: true, aiProcessed: true, uploadedDaysAgo: 400, uploadedByUser: manager },
-    { contractNumber: 'UL-2023-FAC-007', filename: 'Konica-printbeheer-contract.pdf', fileUrl: DEMO_PDF_URL, fileType: 'application/pdf', fileSize: 310_000, versionNumber: 1, isCurrent: true, aiProcessed: false, uploadedDaysAgo: 150, uploadedByUser: registrator },
-    { contractNumber: 'UL-2020-INF-002', filename: 'Siemens-gebouwbeheer-archief.pdf', fileUrl: DEMO_PDF_URL, fileType: 'application/pdf', fileSize: 2_100_000, versionNumber: 1, isCurrent: true, aiProcessed: true, uploadedDaysAgo: 800, uploadedByUser: manager },
-    { contractNumber: 'UL-2024-JUR-011', filename: 'NDA-onderzoekssamenwerking.pdf', fileUrl: DEMO_PDF_URL, fileType: 'application/pdf', fileSize: 88_000, versionNumber: 1, isCurrent: true, aiProcessed: true, uploadedDaysAgo: 85, uploadedByUser: admin },
-    { contractNumber: 'UL-2023-ICT-012', filename: 'Azure-hosting-SLA.pdf', fileUrl: DEMO_PDF_URL_ALT, fileType: 'application/pdf', fileSize: 412_000, versionNumber: 1, isCurrent: true, aiProcessed: true, uploadedDaysAgo: 100, uploadedByUser: manager },
-    { contractNumber: 'UL-2025-ICT-001', filename: 'CONCEPT-datacenter-RFP-antwoord.pdf', fileUrl: DEMO_PDF_URL, fileType: 'application/pdf', fileSize: 1_200_000, versionNumber: 1, isCurrent: true, aiProcessed: false, uploadedDaysAgo: 5, uploadedByUser: registrator },
-    { contractNumber: 'UL-2024-ICT-018', filename: 'Adobe-CCE-orderformulier.pdf', fileUrl: DEMO_PDF_URL, fileType: 'application/pdf', fileSize: 356_000, versionNumber: 1, isCurrent: true, aiProcessed: true, uploadedDaysAgo: 30, uploadedByUser: manager },
-    { contractNumber: 'UL-2024-ICT-018', filename: 'Adobe-productvoorwaarden-bijlage.pdf', fileUrl: DEMO_PDF_URL_ALT, fileType: 'application/pdf', fileSize: 720_000, versionNumber: 2, isCurrent: true, aiProcessed: false, uploadedDaysAgo: 28, uploadedByUser: registrator, documentKind: 'addendum' },
-    { contractNumber: 'UL-2023-ICT-014', filename: 'Cisco-SmartNet-overzicht.pdf', fileUrl: DEMO_PDF_URL, fileType: 'application/pdf', fileSize: 501_000, versionNumber: 1, isCurrent: true, aiProcessed: true, uploadedDaysAgo: 90, uploadedByUser: manager },
-    { contractNumber: 'UL-2024-ICT-022', filename: 'AWS-Enterprise-Agreement-samenvatting.pdf', fileUrl: DEMO_PDF_URL_ALT, fileType: 'application/pdf', fileSize: 980_000, versionNumber: 1, isCurrent: true, aiProcessed: true, uploadedDaysAgo: 40, uploadedByUser: manager },
-    { contractNumber: 'UL-2024-ICT-022', filename: 'AWS-bijlage-verwerkersovereenkomst.pdf', fileUrl: DEMO_PDF_URL, fileType: 'application/pdf', fileSize: 240_000, versionNumber: 2, isCurrent: true, aiProcessed: true, uploadedDaysAgo: 38, uploadedByUser: registrator, documentKind: 'addendum' },
-    { contractNumber: 'UL-2023-ICT-016', filename: 'Atlassian-cloud-state-of-work.pdf', fileUrl: DEMO_PDF_URL, fileType: 'application/pdf', fileSize: 190_000, versionNumber: 1, isCurrent: true, aiProcessed: false, uploadedDaysAgo: 120, uploadedByUser: registrator },
-    { contractNumber: 'UL-2022-ICT-019', filename: 'DR-runbook-en-SLA.pdf', fileUrl: DEMO_PDF_URL_ALT, fileType: 'application/pdf', fileSize: 640_000, versionNumber: 1, isCurrent: true, aiProcessed: true, uploadedDaysAgo: 200, uploadedByUser: manager },
-    { contractNumber: 'UL-2024-ICT-024', filename: 'Teams-Phone-overeenkomst.pdf', fileUrl: DEMO_PDF_URL, fileType: 'application/pdf', fileSize: 275_000, versionNumber: 1, isCurrent: true, aiProcessed: true, uploadedDaysAgo: 25, uploadedByUser: registrator },
-    { contractNumber: 'UL-2024-SEC-008', filename: 'Nedap-camera-installatie-PO.pdf', fileUrl: DEMO_PDF_URL, fileType: 'application/pdf', fileSize: 155_000, versionNumber: 1, isCurrent: true, aiProcessed: false, uploadedDaysAgo: 14, uploadedByUser: manager },
-    { contractNumber: 'UL-2019-INF-005', filename: 'Siemens-energie-pilot-eindrapport.pdf', fileUrl: DEMO_PDF_URL, fileType: 'application/pdf', fileSize: 3_200_000, versionNumber: 1, isCurrent: true, aiProcessed: true, uploadedDaysAgo: 380, uploadedByUser: admin },
+  }> = [
+    { suffix: 'hoofdovereenkomst.pdf', seedDocKind: 'main', documentKind: 'hoofdcontract', versionNumber: 1 },
+    { suffix: 'bijlage-diensten.pdf', seedDocKind: 'annex', documentKind: 'addendum', versionNumber: 1 },
+    { suffix: 'ondertekende-order.pdf', seedDocKind: 'order', documentKind: 'hoofdcontract', versionNumber: 2 },
   ]
 
   let documentsInserted = 0
-  for (const doc of documentsSeed) {
-    const contract = contractByNumber.get(doc.contractNumber)
-    if (!contract) {
-      console.warn(`⚠ Document overgeslagen: onbekend contractnummer ${doc.contractNumber}`)
-      continue
-    }
-    const exists = await db.query.contractDocuments.findFirst({
-      where: and(
-        eq(schema.contractDocuments.contractId, contract.id),
-        eq(schema.contractDocuments.filename, doc.filename),
-      ),
-    })
-    if (exists) continue
+  let blobUploadCount = 0
 
-    await db.insert(schema.contractDocuments).values({
-      contractId: contract.id,
-      filename: doc.filename,
-      fileUrl: doc.fileUrl,
-      fileType: doc.fileType,
-      fileSize: doc.fileSize,
-      versionNumber: doc.versionNumber,
-      isCurrent: doc.isCurrent,
-      documentKind: doc.documentKind ?? 'hoofdcontract',
-      uploadedBy: doc.uploadedByUser.id,
-      uploadedAt: d(-doc.uploadedDaysAgo),
-      aiProcessed: doc.aiProcessed ?? false,
-      aiExtractedDataJson: doc.aiExtractedDataJson ?? null,
-    })
-    documentsInserted++
+  for (let ci = 0; ci < createdContracts.length; ci++) {
+    const c = createdContracts[ci]
+    const cn = c.contractNumber
+    if (!cn) continue
+
+    for (let di = 0; di < docSpecsPerContract.length; di++) {
+      const spec = docSpecsPerContract[di]
+      const filename = `${cn}-${spec.suffix}`
+      const exists = await db.query.contractDocuments.findFirst({
+        where: and(eq(schema.contractDocuments.contractId, c.id), eq(schema.contractDocuments.filename, filename)),
+      })
+      if (exists) continue
+
+      const supplierName = createdSuppliers.find((s) => s.id === c.supplierId)?.name ?? 'Onbekend'
+      const pdfBuf = await buildSeedContractPdfBuffer({
+        orgName: org.name,
+        contractTitle: c.title,
+        contractNumber: cn,
+        supplierName,
+        contractType: c.contractType ?? null,
+        startDate: c.startDate ?? null,
+        endDate: c.endDate ?? null,
+        noticePeriodDays: c.noticePeriodDays ?? null,
+        valueTotal: c.valueTotal != null ? String(c.valueTotal) : null,
+        valueAnnual: c.valueAnnual != null ? String(c.valueAnnual) : null,
+        currency: c.currency ?? null,
+        autoRenewal: c.autoRenewal ?? null,
+        autoRenewalTerms: c.autoRenewalTerms ?? null,
+        seedDocKind: spec.seedDocKind,
+        versionNumber: spec.versionNumber,
+      })
+
+      let fileUrl = DEMO_PDF_URL
+      let fileSize = pdfBuf.length
+
+      if (blobToken) {
+        const path = `seed/docs/${blobSafeSegment(cn)}/${blobSafeSegment(filename)}`
+        try {
+          const up = await putSeedPdfBuffer(blobToken, path, pdfBuf)
+          fileUrl = up.url
+          fileSize = up.size
+          blobUploadCount++
+        } catch (e) {
+          console.warn(`⚠ Blob-upload mislukt voor ${path}:`, e instanceof Error ? e.message : e)
+        }
+      }
+
+      const uploadedBy = di % 2 === 0 ? registrator.id : manager.id
+      await db.insert(schema.contractDocuments).values({
+        contractId: c.id,
+        filename,
+        fileUrl,
+        fileType: 'application/pdf',
+        fileSize,
+        versionNumber: spec.versionNumber,
+        isCurrent: true,
+        documentKind: spec.documentKind,
+        uploadedBy,
+        uploadedAt: d(-(20 + ci * 2 + di)),
+        aiProcessed: di !== 1,
+        aiExtractedDataJson: { source: 'compact-seed', contractNumber: cn, docIndex: di },
+      })
+      documentsInserted++
+    }
   }
-  for (let i = 0; i < Math.min(280, createdContracts.length); i++) {
-    const c = createdContracts[i]
-    await db.insert(schema.contractDocuments).values({
-      contractId: c.id,
-      filename: `Automatisch-testdocument-${(i + 1).toString().padStart(3, '0')}.pdf`,
-      fileUrl: i % 2 === 0 ? DEMO_PDF_URL : DEMO_PDF_URL_ALT,
-      fileType: 'application/pdf',
-      fileSize: 180_000 + i * 7_500,
-      versionNumber: 1,
-      isCurrent: true,
-      documentKind: i % 4 === 0 ? 'addendum' : 'hoofdcontract',
-      uploadedBy: i % 2 === 0 ? manager.id : registrator.id,
-      uploadedAt: d(-(i + 3)),
-      aiProcessed: i % 3 !== 0,
-      aiExtractedDataJson: { source: 'bulk-seed', idx: i + 1 },
-    })
-    documentsInserted++
+
+  if (blobToken) {
+    console.log(`✓ ${blobUploadCount} PDF-objecten op Vercel Blob gezet (private)`)
   }
-  for (let i = 0; i < Math.min(180, createdContracts.length); i++) {
-    const c = createdContracts[(i * 3) % createdContracts.length]
-    await db.insert(schema.contractDocuments).values({
-      contractId: c.id,
-      filename: `Automatisch-bijlage-testdocument-${(i + 1).toString().padStart(3, '0')}.pdf`,
-      fileUrl: i % 2 === 0 ? DEMO_PDF_URL_ALT : DEMO_PDF_URL,
-      fileType: 'application/pdf',
-      fileSize: 90_000 + i * 4_200,
-      versionNumber: 2,
-      isCurrent: i % 6 !== 0,
-      documentKind: 'addendum',
-      uploadedBy: i % 2 === 0 ? registrator.id : manager.id,
-      uploadedAt: d(-(i + 8)),
-      aiProcessed: i % 4 !== 0,
-      aiExtractedDataJson: { source: 'bulk-seed-addendum', idx: i + 1 },
-    })
-    documentsInserted++
-  }
-  console.log(`✓ ${documentsInserted} contractdocumenten toegevoegd (${documentsSeed.length} in catalogus)`)
+  console.log(`✓ ${documentsInserted} contractdocumenten toegevoegd (${docSpecsPerContract.length} per contract)`)
 
   // ── Verplichtingen ───────────────────────────────────────────
   const obligationsData = [
     { contractIdx: 0, description: 'Jaarlijkse licentie-audit indienen bij Microsoft', category: 'financial' as const, dueDate: d(20), status: 'open' as const },
     { contractIdx: 0, description: 'Verwerkersovereenkomst AVG actualiseren', category: 'privacy' as const, dueDate: d(15), status: 'in_progress' as const },
-    { contractIdx: 0, description: 'ISO 27001 certificaat leverancier verifiëren', category: 'it_security' as const, dueDate: d(5), status: 'open' as const },
     { contractIdx: 1, description: 'Kwartaalrapportage SLA-naleving ontvangen Q1', category: 'it_security' as const, dueDate: d(30), status: 'open' as const },
-    { contractIdx: 1, description: 'Jaarlijkse evaluatie dienstverleningsniveau', category: 'financial' as const, dueDate: d(60), status: 'open' as const },
-    { contractIdx: 1, description: 'Beveiligingsscan resultaten beoordelen', category: 'it_security' as const, dueDate: d(-10), status: 'non_compliant' as const },
-    { contractIdx: 2, description: 'Softwareupdate v14.2 testen en goedkeuren', category: 'it_security' as const, dueDate: d(45), status: 'in_progress' as const },
-    { contractIdx: 2, description: 'Jaarlijkse financiële afstemming', category: 'financial' as const, dueDate: d(90), status: 'open' as const },
+    { contractIdx: 2, description: 'Jaarlijkse financiële afstemming Exact', category: 'financial' as const, dueDate: d(90), status: 'open' as const },
     { contractIdx: 3, description: 'Duurzaamheidsrapportage facilitaire partner', category: 'sustainability' as const, dueDate: d(120), status: 'open' as const },
     { contractIdx: 4, description: 'Penetratietest toegangsbeheersysteem', category: 'it_security' as const, dueDate: d(180), status: 'open' as const },
-    { contractIdx: 4, description: 'Privacyimpactanalyse biometrie bijwerken', category: 'privacy' as const, dueDate: d(60), status: 'compliant' as const },
-    { contractIdx: 8, description: 'Uptime SLA 99.9% kwartaalrapportage', category: 'it_security' as const, dueDate: d(45), status: 'compliant' as const },
-    { contractIdx: 8, description: 'Disaster recovery test uitvoeren', category: 'it_security' as const, dueDate: d(90), status: 'open' as const },
-    { contractIdx: 11, description: 'Adobe seat-reconcile met procurement', category: 'financial' as const, dueDate: d(40), status: 'open' as const },
-    { contractIdx: 12, description: 'Cisco firmware lifecycle review campus switches', category: 'it_security' as const, dueDate: d(55), status: 'in_progress' as const },
-    { contractIdx: 13, description: 'AWS cost optimization review kwartaal', category: 'financial' as const, dueDate: d(25), status: 'open' as const },
-    { contractIdx: 14, description: 'Atlassian gebruikerslicenties inventariseren', category: 'it_security' as const, dueDate: d(70), status: 'open' as const },
-    { contractIdx: 15, description: 'DR-test jaarlijks uitvoeren en rapporteren', category: 'it_security' as const, dueDate: d(95), status: 'open' as const },
-    { contractIdx: 16, description: 'Teams Phone nummerplan actualiseren', category: 'other' as const, dueDate: d(110), status: 'open' as const },
-    { contractIdx: 17, description: 'Privacy DPIA cameratoezicht campus bijwerken', category: 'privacy' as const, dueDate: d(50), status: 'in_progress' as const },
+    { contractIdx: 8, description: 'Adobe seat-reconcile met procurement', category: 'financial' as const, dueDate: d(40), status: 'open' as const },
+    { contractIdx: 9, description: 'Concept datacenter — definitieve offerte opvolgen', category: 'other' as const, dueDate: d(60), status: 'open' as const },
   ]
 
   for (const o of obligationsData) {
@@ -771,20 +547,18 @@ async function seed() {
     'other',
   ]
   let extraObligations = 0
-  for (let i = 0; i < Math.min(80, createdContracts.length); i++) {
+  for (let i = 0; i < createdContracts.length; i++) {
     const contract = createdContracts[i]
-    for (let j = 1; j <= 2; j++) {
-      await db.insert(schema.contractObligations).values({
-        contractId: contract.id,
-        description: `Automatische testverplichting ${j} voor ${contract.contractNumber ?? contract.id}`,
-        category: extraObligationCategories[(i + j) % extraObligationCategories.length],
-        dueDate: d(10 + i + j * 7),
-        status: extraObligationStatuses[(i + j) % extraObligationStatuses.length],
-        recurring: j % 2 === 0,
-        extractedByAi: false,
-      })
-      extraObligations++
-    }
+    await db.insert(schema.contractObligations).values({
+      contractId: contract.id,
+      description: `Periodieke review voor ${contract.contractNumber ?? contract.id}`,
+      category: extraObligationCategories[i % extraObligationCategories.length],
+      dueDate: d(14 + i * 3),
+      status: extraObligationStatuses[i % extraObligationStatuses.length],
+      recurring: false,
+      extractedByAi: false,
+    })
+    extraObligations++
   }
   console.log(`✓ ${obligationsData.length + extraObligations} verplichtingen aangemaakt`)
 
@@ -793,12 +567,10 @@ async function seed() {
     { contractIdx: 0, triggerType: 'days_before_end' as const, triggerValue: 30, recipients: ['p.vandenberg@universiteitleiden.nl', 's.janssen@universiteitleiden.nl'] },
     { contractIdx: 0, triggerType: 'days_before_option' as const, triggerValue: 14, recipients: ['s.janssen@universiteitleiden.nl'] },
     { contractIdx: 1, triggerType: 'days_before_end' as const, triggerValue: 60, recipients: ['s.janssen@universiteitleiden.nl'] },
-    { contractIdx: 1, triggerType: 'days_before_option' as const, triggerValue: 30, recipients: ['p.vandenberg@universiteitleiden.nl'] },
     { contractIdx: 2, triggerType: 'days_before_end' as const, triggerValue: 90, recipients: ['t.degroot@universiteitleiden.nl'] },
     { contractIdx: 4, triggerType: 'days_before_end' as const, triggerValue: 90, recipients: ['s.janssen@universiteitleiden.nl'] },
-    { contractIdx: 8, triggerType: 'days_before_end' as const, triggerValue: 90, recipients: ['p.vandenberg@universiteitleiden.nl'] },
-    { contractIdx: 13, triggerType: 'days_before_end' as const, triggerValue: 120, recipients: ['s.janssen@universiteitleiden.nl', 'p.vandenberg@universiteitleiden.nl'] },
-    { contractIdx: 12, triggerType: 'days_before_end' as const, triggerValue: 60, recipients: ['s.janssen@universiteitleiden.nl'] },
+    { contractIdx: 7, triggerType: 'days_before_end' as const, triggerValue: 90, recipients: ['p.vandenberg@universiteitleiden.nl'] },
+    { contractIdx: 8, triggerType: 'days_before_end' as const, triggerValue: 60, recipients: ['s.janssen@universiteitleiden.nl'] },
   ]
 
   for (const n of notifData) {
@@ -814,7 +586,7 @@ async function seed() {
     })
   }
   let extraNotifRules = 0
-  for (let i = 0; i < Math.min(50, createdContracts.length); i++) {
+  for (let i = 0; i < createdContracts.length; i++) {
     await db.insert(schema.notificationRules).values({
       contractId: createdContracts[i].id,
       triggerType: 'days_before_end',
@@ -829,7 +601,7 @@ async function seed() {
 
   // ── Goedkeuringsworkflows ────────────────────────────────────
   const wfData = [
-    { contractIdx: 10, type: 'new_contract' as const, status: 'pending' as const },
+    { contractIdx: 9, type: 'new_contract' as const, status: 'pending' as const },
     { contractIdx: 1, type: 'renewal' as const, status: 'approved' as const },
     { contractIdx: 6, type: 'change' as const, status: 'rejected' as const },
   ]
@@ -860,8 +632,8 @@ async function seed() {
     { contractIdx: 0, action: 'contract.aangemaakt', userId: registrator.id, daysAgo: -180 },
     { contractIdx: 0, action: 'contract.bijgewerkt', userId: manager.id, daysAgo: -30, newValue: { status: 'actief' } },
     { contractIdx: 1, action: 'contract.aangemaakt', userId: registrator.id, daysAgo: -548 },
-    { contractIdx: 6, action: 'contract.bijgewerkt', userId: admin.id, daysAgo: -15, newValue: { noticePeriodDays: 180 } },
-    { contractIdx: 9, action: 'contract.gearchiveerd', userId: admin.id, daysAgo: -170, newValue: { status: 'gearchiveerd' } },
+    { contractIdx: 6, action: 'contract.bijgewerkt', userId: admin.id, daysAgo: -15, newValue: { noticePeriodDays: 30 } },
+    { contractIdx: 9, action: 'contract.concept_bijgewerkt', userId: registrator.id, daysAgo: -5, newValue: { status: 'concept' } },
     { contractIdx: 2, action: 'document.geupload', userId: registrator.id, daysAgo: -60, newValue: { filename: 'exact-contract-2024.pdf' } },
     { contractIdx: 3, action: 'gebruiker.rol_gewijzigd', userId: admin.id, daysAgo: -90, newValue: { role: 'registrator' } },
   ]
@@ -882,10 +654,9 @@ async function seed() {
 
   // ── Dashboard notificaties ───────────────────────────────────
   const dashNotifs = [
-    { contractIdx: 0, title: '⚠️ Contract verloopt binnenkort', message: 'Microsoft 365 verloopt over 25 dagen. Controleer de optiedatum.', type: 'warning' },
-    { contractIdx: 1, title: '⚠️ Actie vereist: Capgemini contract', message: 'Contract verloopt over 65 dagen. Optiedatum is over 35 dagen.', type: 'warning' },
-    { contractIdx: 1, title: '🔴 Non-compliance gedetecteerd', message: 'Beveiligingsscan resultaten zijn niet tijdig beoordeeld.', type: 'error' },
-    { contractIdx: 5, title: 'Notificatie: Konica Minolta', message: 'Contract verlenging binnenkort. Evalueer de prestatiecijfers.', type: 'info' },
+    { contractIdx: 0, title: '⚠️ Contract verloopt binnenkort', message: 'Microsoft 365 verloopt binnenkort. Controleer de optiedatum.', type: 'warning' },
+    { contractIdx: 1, title: '⚠️ Actie vereist: Capgemini contract', message: 'Controleer eind- en optiedatum.', type: 'warning' },
+    { contractIdx: 5, title: 'Notificatie: Konica Minolta', message: 'Contract evaluatie plannen.', type: 'info' },
   ]
 
   for (const n of dashNotifs) {
@@ -934,7 +705,7 @@ async function seed() {
   console.log('   Manager:     s.janssen@universiteitleiden.nl')
   console.log('\n📊 Overzicht:')
   console.log(`   ${createdProjects.length} projecten`)
-  console.log(`   ${createdContracts.length} contracten (incl. bulk testset)`)
+  console.log(`   ${createdContracts.length} contracten (compacte testset)`)
   console.log(`   ${createdSuppliers.length} leveranciers`)
   console.log(`   ${documentsInserted} contractdocumenten`)
   console.log(`   ${obligationsData.length + extraObligations} verplichtingen`)

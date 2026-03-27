@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 import { getOrCreateUser } from '@/lib/auth'
-import { db, contract, contractProject, project } from '@/lib/db'
-import { and, eq, inArray } from 'drizzle-orm'
+import { db, contracts, projects } from '@/lib/db'
+import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { apiError, apiSuccess } from '@/lib/api-response'
 
@@ -9,24 +9,31 @@ const getQuerySchema = z.object({
   projectId: z.string().uuid().optional(),
 })
 
-const createContractSchema = z.object({
-  reference: z.string().min(1),
-  contractType: z.string().min(1),
-  status: z.string().optional().default('concept'),
-  startDate: z.string().optional().nullable(),
-  endDate: z.string().optional().nullable(),
-  projectIds: z.array(z.string().uuid()).min(1),
-  role: z.string().optional().default('lead'),
-})
+function parseDateInput(v: unknown): Date | null {
+  if (v == null || v === '') return null
+  const s = String(v)
+  const d = new Date(s)
+  return Number.isNaN(d.getTime()) ? null : d
+}
 
-const legacyCreateContractSchema = z.object({
-  title: z.string().optional(),
+const createBodySchema = z.object({
+  projectId: z.string().uuid(),
+  title: z.string().min(1),
   contractNumber: z.string().optional(),
+  status: z.string().optional().default('concept'),
   contractType: z.string().optional(),
-  status: z.string().optional(),
-  startDate: z.string().optional().nullable(),
-  endDate: z.string().optional().nullable(),
-  projectId: z.string().uuid().optional(),
+  supplierId: z.string().optional(),
+  ownerUserId: z.string().optional(),
+  startDate: z.union([z.string(), z.null()]).optional(),
+  endDate: z.union([z.string(), z.null()]).optional(),
+  optionDate: z.union([z.string(), z.null()]).optional(),
+  noticePeriodDays: z.string().optional(),
+  valueTotal: z.string().optional(),
+  valueAnnual: z.string().optional(),
+  currency: z.string().optional(),
+  autoRenewal: z.boolean().optional(),
+  autoRenewalTerms: z.string().optional(),
+  retentionYears: z.string().optional(),
 })
 
 export async function GET(req: NextRequest) {
@@ -39,20 +46,16 @@ export async function GET(req: NextRequest) {
     })
     if (!parsed.success) return apiError(parsed.error.flatten().formErrors.join(', ') || 'Ongeldige query', 400)
 
-    if (parsed.data.projectId) {
-      const rows = await db
-        .select({
-          contract,
-          projectId: contractProject.projectId,
-          role: contractProject.role,
-        })
-        .from(contractProject)
-        .innerJoin(contract, eq(contract.id, contractProject.contractId))
-        .where(eq(contractProject.projectId, parsed.data.projectId))
-      return apiSuccess(rows)
-    }
+    const whereClause = parsed.data.projectId
+      ? and(eq(contracts.orgId, user.orgId), eq(contracts.projectId, parsed.data.projectId))
+      : eq(contracts.orgId, user.orgId)
 
-    const rows = await db.select().from(contract)
+    const rows = await db.query.contracts.findMany({
+      where: whereClause,
+      with: { project: true },
+      orderBy: (c, { desc }) => [desc(c.updatedAt)],
+    })
+
     return apiSuccess(rows)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Onbekende fout'
@@ -66,62 +69,48 @@ export async function POST(req: NextRequest) {
     if (!user) return apiError('Niet ingelogd', 401)
 
     const body = await req.json()
-    let payload: z.infer<typeof createContractSchema>
-    const parsedNew = createContractSchema.safeParse(body)
-    if (parsedNew.success) {
-      payload = parsedNew.data
-    } else {
-      const parsedLegacy = legacyCreateContractSchema.safeParse(body)
-      if (!parsedLegacy.success) {
-        return apiError(
-          parsedNew.error.flatten().formErrors.join(', ') ||
-            parsedLegacy.error.flatten().formErrors.join(', ') ||
-            'Ongeldige input',
-          400
-        )
-      }
+    const parsed = createBodySchema.safeParse(body)
+    if (!parsed.success) return apiError(parsed.error.flatten().formErrors.join(', ') || 'Ongeldige input', 400)
 
-      const legacy = parsedLegacy.data
-      const legacyProjectIds = legacy.projectId ? [legacy.projectId] : []
-      if (legacyProjectIds.length === 0) return apiError('projectId ontbreekt', 400)
+    const d = parsed.data
 
-      payload = {
-        reference: (legacy.contractNumber?.trim() || legacy.title?.trim() || `legacy-${crypto.randomUUID().slice(0, 8)}`)!,
-        contractType: (legacy.contractType?.trim() || 'legacy')!,
-        status: legacy.status?.trim() || 'concept',
-        startDate: legacy.startDate ?? null,
-        endDate: legacy.endDate ?? null,
-        projectIds: legacyProjectIds,
-        role: 'lead',
-      }
-    }
+    const proj = await db.query.projects.findFirst({
+      where: and(eq(projects.id, d.projectId), eq(projects.orgId, user.orgId)),
+    })
+    if (!proj) return apiError('Project niet gevonden', 400)
 
-    const uniqueProjectIds = [...new Set(payload.projectIds)]
-    const linkedProjects = await db.select({ id: project.id }).from(project).where(inArray(project.id, uniqueProjectIds))
-    const linkedProjectSet = new Set(linkedProjects.map((row) => row.id))
-    const missingProjects = uniqueProjectIds.filter((id) => !linkedProjectSet.has(id))
-    if (missingProjects.length > 0) return apiError('Een of meer projecten bestaan niet', 400)
+    const notice =
+      d.noticePeriodDays && d.noticePeriodDays.trim() !== '' ? parseInt(d.noticePeriodDays, 10) : null
+    const retention =
+      d.retentionYears && d.retentionYears.trim() !== '' ? parseInt(d.retentionYears, 10) : 7
 
-    const [newContract] = await db
-      .insert(contract)
+    const [created] = await db
+      .insert(contracts)
       .values({
-        reference: payload.reference,
-        contractType: payload.contractType,
-        status: payload.status,
-        startDate: payload.startDate ?? null,
-        endDate: payload.endDate ?? null,
+        orgId: user.orgId,
+        projectId: d.projectId,
+        title: d.title,
+        contractNumber: d.contractNumber?.trim() || null,
+        status: (d.status ?? 'concept') as (typeof contracts.$inferInsert)['status'],
+        contractType: d.contractType?.trim() || null,
+        supplierId: d.supplierId?.trim() || null,
+        ownerUserId: d.ownerUserId?.trim() || user.id,
+        startDate: parseDateInput(d.startDate),
+        endDate: parseDateInput(d.endDate),
+        optionDate: parseDateInput(d.optionDate),
+        noticePeriodDays: Number.isFinite(notice) ? notice : null,
+        valueTotal: d.valueTotal?.trim() || null,
+        valueAnnual: d.valueAnnual?.trim() || null,
+        currency: d.currency?.trim() || 'EUR',
+        autoRenewal: d.autoRenewal ?? false,
+        autoRenewalTerms: d.autoRenewalTerms?.trim() || null,
+        retentionYears: Number.isFinite(retention) ? retention : 7,
+        createdBy: user.id,
+        updatedAt: new Date(),
       })
       .returning()
 
-    await db.insert(contractProject).values(
-      uniqueProjectIds.map((projectId) => ({
-        contractId: newContract.id,
-        projectId,
-        role: payload.role,
-      }))
-    )
-
-    return apiSuccess(newContract, 201)
+    return apiSuccess(created, 201)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Onbekende fout'
     return apiError(message, 500)

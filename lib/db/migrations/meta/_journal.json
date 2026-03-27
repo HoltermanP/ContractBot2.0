@@ -36,6 +36,13 @@
       "when": 1774540000000,
       "tag": "0004_contract_management_cleanup",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1774636325547,
+      "tag": "0005_mysterious_caretaker",
+      "breakpoints": true
     }
   ]
 }

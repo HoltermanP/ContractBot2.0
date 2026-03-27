@@ -461,6 +461,54 @@ export const trainingProgress = pgTable(
   })
 )
 
+// Contract-vragen (AI Q&A): clusters voor FAQ + volledige geschiedenis per organisatie
+export const contractAskClusters = pgTable(
+  'contract_ask_clusters',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    orgId: text('org_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    canonicalQuestion: text('canonical_question').notNull(),
+    askCount: integer('ask_count').notNull().default(0),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    orgIdx: index('contract_ask_clusters_org_id_idx').on(table.orgId),
+    orgAskCountIdx: index('contract_ask_clusters_org_ask_count_idx').on(table.orgId, table.askCount),
+  })
+)
+
+export const contractAskTurns = pgTable(
+  'contract_ask_turns',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    orgId: text('org_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
+    clusterId: text('cluster_id')
+      .notNull()
+      .references(() => contractAskClusters.id, { onDelete: 'cascade' }),
+    questionRaw: text('question_raw').notNull(),
+    portfolioMode: boolean('portfolio_mode').notNull(),
+    contractIds: jsonb('contract_ids').$type<string[]>().notNull().default([]),
+    referenceUrls: jsonb('reference_urls').$type<string[]>().notNull().default([]),
+    responsePayload: jsonb('response_payload').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    orgIdx: index('contract_ask_turns_org_id_idx').on(table.orgId),
+    clusterIdx: index('contract_ask_turns_cluster_id_idx').on(table.clusterId),
+    clusterCreatedIdx: index('contract_ask_turns_cluster_created_idx').on(table.clusterId, table.createdAt),
+  })
+)
+
 // Dashboard Notifications (in-app)
 export const dashboardNotifications = pgTable('dashboard_notifications', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -483,6 +531,8 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   suppliers: many(suppliers),
   customFields: many(customFields),
   trainingCourses: many(trainingCourses),
+  contractAskClusters: many(contractAskClusters),
+  contractAskTurns: many(contractAskTurns),
 }))
 
 export const usersRelations = relations(users, ({ one, many }) => ({
@@ -644,4 +694,15 @@ export const trainingModulesRelations = relations(trainingModules, ({ one, many 
 export const trainingProgressRelations = relations(trainingProgress, ({ one }) => ({
   user: one(users, { fields: [trainingProgress.userId], references: [users.id] }),
   module: one(trainingModules, { fields: [trainingProgress.moduleId], references: [trainingModules.id] }),
+}))
+
+export const contractAskClustersRelations = relations(contractAskClusters, ({ one, many }) => ({
+  organization: one(organizations, { fields: [contractAskClusters.orgId], references: [organizations.id] }),
+  turns: many(contractAskTurns),
+}))
+
+export const contractAskTurnsRelations = relations(contractAskTurns, ({ one }) => ({
+  organization: one(organizations, { fields: [contractAskTurns.orgId], references: [organizations.id] }),
+  cluster: one(contractAskClusters, { fields: [contractAskTurns.clusterId], references: [contractAskClusters.id] }),
+  user: one(users, { fields: [contractAskTurns.userId], references: [users.id] }),
 }))

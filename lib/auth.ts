@@ -48,6 +48,24 @@ export async function ensureOrgMembership(userId: string, orgId: string, role: U
   }
 }
 
+async function getOrCreateSoloOrgForClerkUser(clerkUserId: string): Promise<string> {
+  const existingOrg = await db.query.organizations.findFirst({
+    where: eq(organizations.slug, clerkUserId),
+  })
+  if (existingOrg) return existingOrg.id
+
+  const [newOrg] = await db.insert(organizations).values({
+    name: 'Mijn Organisatie',
+    slug: clerkUserId,
+  }).returning()
+  await db.insert(projects).values({
+    orgId: newOrg.id,
+    name: 'Algemeen',
+    description: 'Standaardproject voor contracten',
+  })
+  return newOrg.id
+}
+
 export async function getOrCreateUser(): Promise<AuthUser | null> {
   const clerkUser = await currentUser()
   if (!clerkUser) return null
@@ -55,47 +73,41 @@ export async function getOrCreateUser(): Promise<AuthUser | null> {
   const existing = await db.query.users.findFirst({
     where: eq(users.clerkId, clerkUser.id),
   })
+
+  const role = (clerkUser.publicMetadata?.role as UserRole) ?? 'reader'
+  const name =
+    (`${clerkUser.firstName ?? ''} ${clerkUser.lastName ?? ''}`.trim()) ||
+    (clerkUser.emailAddresses[0]?.emailAddress ?? 'Gebruiker')
+  const email = clerkUser.emailAddresses[0]?.emailAddress ?? ''
+
   if (existing) {
-    if (existing.orgId) {
-      await ensureOrgMembership(existing.id, existing.orgId, existing.role as UserRole)
+    if (!existing.orgId) {
+      const orgId = await getOrCreateSoloOrgForClerkUser(clerkUser.id)
+      const [updated] = await db
+        .update(users)
+        .set({ orgId, role, name, email })
+        .where(eq(users.id, existing.id))
+        .returning()
+      await ensureOrgMembership(updated.id, orgId, updated.role as UserRole)
+      return updated as AuthUser
     }
+    await ensureOrgMembership(existing.id, existing.orgId, existing.role as UserRole)
     return existing as AuthUser
   }
 
-  // Get or create org from Clerk org
-  // Use clerk_id as the org slug for solo users, or create a default org
-  const clerkOrgId = clerkUser.id
-  let orgId: string | null = null
-
-  const existingOrg = await db.query.organizations.findFirst({
-    where: eq(organizations.slug, clerkOrgId),
-  })
-  if (existingOrg) {
-    orgId = existingOrg.id
-  } else {
-    const orgName = 'Mijn Organisatie'
-    const [newOrg] = await db.insert(organizations).values({
-      name: orgName,
-      slug: clerkOrgId,
-    }).returning()
-    orgId = newOrg.id
-    await db.insert(projects).values({
-      orgId: newOrg.id,
-      name: 'Algemeen',
-      description: 'Standaardproject voor contracten',
+  const orgId = await getOrCreateSoloOrgForClerkUser(clerkUser.id)
+  const [newUser] = await db
+    .insert(users)
+    .values({
+      clerkId: clerkUser.id,
+      orgId,
+      role,
+      name,
+      email,
     })
-  }
+    .returning()
 
-  const role = (clerkUser.publicMetadata?.role as UserRole) ?? 'reader'
-  const [newUser] = await db.insert(users).values({
-    clerkId: clerkUser.id,
-    orgId,
-    role,
-    name: (`${clerkUser.firstName ?? ''} ${clerkUser.lastName ?? ''}`.trim()) || (clerkUser.emailAddresses[0]?.emailAddress ?? 'Gebruiker'),
-    email: clerkUser.emailAddresses[0]?.emailAddress ?? '',
-  }).returning()
-
-  await ensureOrgMembership(newUser.id, orgId!, role)
+  await ensureOrgMembership(newUser.id, orgId, role)
 
   return newUser as AuthUser
 }

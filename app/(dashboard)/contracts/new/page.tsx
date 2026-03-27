@@ -1,11 +1,8 @@
 import { getOrCreateUser, requireRole } from '@/lib/auth'
-import { db } from '@/lib/db'
+import { db, projects } from '@/lib/db'
 import { eq } from 'drizzle-orm'
 import { redirect } from 'next/navigation'
 import { ContractForm } from '../contract-form'
-import { ensureDefaultProjectForOrg } from '@/lib/org'
-import { project } from '@/lib/db'
-import { z } from 'zod'
 
 export default async function NewContractPage({
   searchParams,
@@ -16,19 +13,19 @@ export default async function NewContractPage({
   const user = await getOrCreateUser()
   if (!user) redirect('/sign-in')
 
-  const parsedOrgId = z.string().uuid().safeParse(user.orgId)
-  if (!parsedOrgId.success) redirect('/dashboard')
-
-  await ensureDefaultProjectForOrg(parsedOrgId.data)
-
   const { project: projectFromUrl } = await searchParams
 
-  const allProjects = await db.query.project.findMany({
-      where: eq(project.organisationId, parsedOrgId.data),
-      orderBy: (p, { asc }) => [asc(p.name)],
-    })
+  const allProjects = await db.query.projects.findMany({
+    where: eq(projects.orgId, user.orgId),
+    orderBy: (p, { asc }) => [asc(p.name)],
+  })
+
+  if (allProjects.length === 0) {
+    redirect('/dashboard')
+  }
+
   const initialProject =
-    projectFromUrl && allProjects.some((p) => p.id === projectFromUrl) ? projectFromUrl : allProjects[0]?.id ?? ''
+    projectFromUrl && allProjects.some((p) => p.id === projectFromUrl) ? projectFromUrl : allProjects[0]!.id
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">

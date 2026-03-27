@@ -1,7 +1,6 @@
 import { getOrCreateUser } from '@/lib/auth'
-import { db, contract, contractProject, project } from '@/lib/db'
-import { and, eq, inArray } from 'drizzle-orm'
-import { ensureDefaultProjectForOrg } from '@/lib/org'
+import { db, contracts, projects } from '@/lib/db'
+import { and, desc, eq, inArray, or } from 'drizzle-orm'
 import { canMutateContractData } from '@/lib/permissions'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -9,11 +8,11 @@ import { formatDate, daysUntil, getExpiryBadgeClass } from '@/lib/utils'
 import Link from 'next/link'
 import { Plus } from 'lucide-react'
 import { ContractsFilter } from './contracts-filter'
-import { z } from 'zod'
 
 interface SearchParams {
   status?: string
   search?: string
+  type?: string
   project?: string
 }
 
@@ -22,56 +21,63 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
   const user = await getOrCreateUser()
   if (!user) return null
 
-  const parsedOrgId = z.string().uuid().safeParse(user.orgId)
-  if (!parsedOrgId.success) return null
+  const readerArchiveFilter =
+    user.role === 'reader'
+      ? or(
+          eq(contracts.status, 'actief'),
+          eq(contracts.status, 'concept'),
+          eq(contracts.status, 'verlopen')
+        )
+      : undefined
 
-  await ensureDefaultProjectForOrg(parsedOrgId.data)
-
-  const allProjects = await db.query.project.findMany({
-    where: eq(project.organisationId, parsedOrgId.data),
+  const allProjects = await db.query.projects.findMany({
+    where: eq(projects.orgId, user.orgId),
     orderBy: (p, { asc }) => [asc(p.name)],
   })
   const allowedProjectIds = allProjects.map((p) => p.id)
-  if (allowedProjectIds.length === 0) return null
+  if (allowedProjectIds.length === 0) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold text-gray-900">Contracten</h1>
+        <p className="text-muted-foreground">Geen projecten voor uw organisatie. Maak eerst een project aan.</p>
+      </div>
+    )
+  }
 
   const selectedProjectIds =
     resolvedParams.project && allowedProjectIds.includes(resolvedParams.project)
       ? [resolvedParams.project]
       : allowedProjectIds
 
-  const links = await db
-    .select({
-      contractId: contractProject.contractId,
-      projectId: contractProject.projectId,
-      projectName: project.name,
+  const baseRows = await db.query.contracts.findMany({
+    where: and(
+      eq(contracts.orgId, user.orgId),
+      readerArchiveFilter,
+      inArray(contracts.projectId, selectedProjectIds as [string, ...string[]])
+    ),
+    with: { project: true },
+    orderBy: [desc(contracts.updatedAt)],
+  })
+
+  const allContracts = baseRows
+    .filter((c) => !resolvedParams.status || resolvedParams.status === 'all' || c.status === resolvedParams.status)
+    .filter((c) => !resolvedParams.type || resolvedParams.type === 'all' || c.contractType === resolvedParams.type)
+    .filter((c) => {
+      if (!resolvedParams.search?.trim()) return true
+      const q = resolvedParams.search.toLowerCase()
+      return (
+        (c.contractNumber?.toLowerCase().includes(q) ?? false) ||
+        c.title.toLowerCase().includes(q) ||
+        (c.contractType?.toLowerCase().includes(q) ?? false)
+      )
     })
-    .from(contractProject)
-    .innerJoin(project, eq(project.id, contractProject.projectId))
-    .where(and(eq(project.organisationId, parsedOrgId.data)))
-
-  const linkByContract = new Map<string, Array<{ projectId: string; projectName: string }>>()
-  for (const link of links) {
-    if (!selectedProjectIds.includes(link.projectId)) continue
-    const existing = linkByContract.get(link.contractId) ?? []
-    existing.push({ projectId: link.projectId, projectName: link.projectName })
-    linkByContract.set(link.contractId, existing)
-  }
-
-  const contractIds = [...new Set([...linkByContract.keys()])]
-  const baseContracts = contractIds.length
-    ? await db.select().from(contract).where(inArray(contract.id, contractIds))
-    : []
-  const allContracts = baseContracts
-    .filter((c) => !resolvedParams.status || c.status === resolvedParams.status)
-    .filter(
-      (c) =>
-        !resolvedParams.search ||
-        c.reference.toLowerCase().includes(resolvedParams.search.toLowerCase()) ||
-        c.contractType.toLowerCase().includes(resolvedParams.search.toLowerCase())
-    )
     .map((c) => ({
-      ...c,
-      projects: linkByContract.get(c.id) ?? [],
+      id: c.id,
+      reference: c.contractNumber?.trim() || c.title,
+      contractType: c.contractType ?? '—',
+      status: c.status,
+      endDate: c.endDate,
+      projects: c.project ? [{ projectId: c.project.id, projectName: c.project.name }] : [],
     }))
 
   return (
@@ -105,7 +111,7 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
             </tr>
           </thead>
           <tbody className="divide-y">
-            {allContracts.map(contract => {
+            {allContracts.map((contract) => {
               const days = daysUntil(contract.endDate)
               return (
                 <tr key={contract.id} className="hover:bg-gray-50 transition-colors">
@@ -125,15 +131,15 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
                   </td>
                   <td className="px-4 py-3">
                     {contract.endDate ? (
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getExpiryBadgeClass(days)}`}>
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getExpiryBadgeClass(days)}`}
+                      >
                         {formatDate(contract.endDate)}
-                        {days !== null && (
-                          <span className="ml-1">
-                            {days > 0 ? `${days}d` : 'Verlopen'}
-                          </span>
-                        )}
+                        {days !== null && <span className="ml-1">{days > 0 ? `${days}d` : 'Verlopen'}</span>}
                       </span>
-                    ) : '—'}
+                    ) : (
+                      '—'
+                    )}
                   </td>
                 </tr>
               )
@@ -159,7 +165,12 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
 function FileText({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+      />
     </svg>
   )
 }

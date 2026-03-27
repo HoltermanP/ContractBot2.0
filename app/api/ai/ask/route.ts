@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getOrCreateUser } from '@/lib/auth'
 import { answerContractQuestion } from '@/lib/openai'
-import { loadContractTextBlocks, semanticTopContractIds, type QaContextBlock } from '@/lib/contract-qa-context'
+import {
+  contractIdsWithDocumentsFallback,
+  loadContractTextBlocks,
+  semanticTopContractIds,
+  type QaContextBlock,
+} from '@/lib/contract-qa-context'
 import { fetchReferenceUrlAsText } from '@/lib/fetch-reference-url'
+import { persistContractAskTurn } from '@/lib/contract-ask-persist'
+import { enrichAskSources } from '@/lib/ask-source-links'
 
 const MAX_CONTEXT_CONTRACTS = 5
 const MAX_REFERENCE_URLS = 4
@@ -42,7 +49,10 @@ export async function POST(req: NextRequest) {
     let contractBlocks: QaContextBlock[] = []
 
     if (portfolioMode) {
-      const topIds = await semanticTopContractIds(user.orgId, question, MAX_CONTEXT_CONTRACTS, { readerMode })
+      let topIds = await semanticTopContractIds(user.orgId, question, MAX_CONTEXT_CONTRACTS, { readerMode })
+      if (topIds.length === 0) {
+        topIds = await contractIdsWithDocumentsFallback(user.orgId, MAX_CONTEXT_CONTRACTS, { readerMode })
+      }
       contractBlocks = await loadContractTextBlocks(user.orgId, topIds, { hideArchivedForReader: readerMode })
     } else {
       contractBlocks = await loadContractTextBlocks(user.orgId, contractIds, { hideArchivedForReader: readerMode })
@@ -55,6 +65,8 @@ export async function POST(req: NextRequest) {
         urlBlocks.push({
           kind: 'url',
           id: url,
+          documentId: null,
+          fileType: null,
           title,
           detail: url,
           text: text.slice(0, 48_000),
@@ -70,7 +82,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error:
-            'Geen bruikbare bronnen: koppel contracten met documenten, of voeg referentie-URL\'s toe. Voor automatische selectie van contracten is een geïndexeerd (geüpload) contract nodig.',
+            'Geen bruikbare bronnen: zorg dat contracten actuele PDF- of DOCX-documenten hebben (en dat BLOB_READ_WRITE_TOKEN gezet is voor private Blob-URL’s), of voeg referentie-URL’s toe. Optioneel: indexeer contracten voor slimmere automatische selectie.',
         },
         { status: 400 }
       )
@@ -82,13 +94,32 @@ export async function POST(req: NextRequest) {
       user.orgId
     )
 
-    return NextResponse.json({
+    const sourcesWithLinks = enrichAskSources(result.sources, allBlocks)
+
+    const payload = {
       ...result,
+      sources: sourcesWithLinks,
       contextSummary: {
         contractsUsed: dedupeContractsById(contractBlocks),
         urlsUsed: urlBlocks.map((b) => ({ url: b.detail })),
       },
-    })
+    }
+
+    try {
+      await persistContractAskTurn({
+        orgId: user.orgId,
+        userId: user.id,
+        questionRaw: question,
+        portfolioMode,
+        contractIds,
+        referenceUrls,
+        response: payload,
+      })
+    } catch (e) {
+      console.error('contract ask persist failed', e)
+    }
+
+    return NextResponse.json(payload)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Onbekende fout'
     return NextResponse.json({ error: message }, { status: 500 })

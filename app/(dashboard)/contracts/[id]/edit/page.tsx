@@ -1,12 +1,9 @@
 import { getOrCreateUser, requireRole } from '@/lib/auth'
-import { db } from '@/lib/db'
-import { contract, contractProject, project } from '@/lib/db'
+import { db, contracts, projects } from '@/lib/db'
 import { and, eq } from 'drizzle-orm'
 import { notFound, redirect } from 'next/navigation'
 import { ContractForm } from '../../contract-form'
 import { canMutateContractData } from '@/lib/permissions'
-import { ensureDefaultProjectForOrg } from '@/lib/org'
-import { z } from 'zod'
 
 export default async function EditContractPage({ params }: { params: Promise<{ id: string }> }) {
   await requireRole('registrator')
@@ -16,42 +13,41 @@ export default async function EditContractPage({ params }: { params: Promise<{ i
 
   if (!canMutateContractData(user.role)) redirect(`/contracts/${id}`)
 
-  const row = await db.query.contract.findFirst({
-    where: eq(contract.id, id),
+  const row = await db.query.contracts.findFirst({
+    where: and(eq(contracts.id, id), eq(contracts.orgId, user.orgId)),
   })
   if (!row) notFound()
 
-  const parsedOrgId = z.string().uuid().safeParse(user.orgId)
-  if (!parsedOrgId.success) redirect('/contracts')
-  await ensureDefaultProjectForOrg(parsedOrgId.data)
-
-  const [allProjects, links] = await Promise.all([
-    db.query.project.findMany({
-      where: eq(project.organisationId, parsedOrgId.data),
-      orderBy: (p, { asc }) => [asc(p.name)],
-    }),
-    db.query.contractProject.findMany({
-      where: eq(contractProject.contractId, row.id),
-    }),
-  ])
-
-  const fallbackProjectId = allProjects[0]?.id ?? ''
+  const allProjects = await db.query.projects.findMany({
+    where: eq(projects.orgId, user.orgId),
+    orderBy: (p, { asc }) => [asc(p.name)],
+  })
 
   const initialData = {
-    projectId: links[0]?.projectId ?? fallbackProjectId,
-    title: row.reference,
-    contractNumber: row.reference,
+    projectId: row.projectId ?? allProjects[0]?.id ?? '',
+    title: row.title,
+    contractNumber: row.contractNumber ?? '',
     status: row.status,
     contractType: row.contractType ?? '',
+    supplierId: row.supplierId ?? '',
+    ownerUserId: row.ownerUserId ?? user.id,
     startDate: row.startDate ? new Date(row.startDate).toISOString().split('T')[0] : '',
     endDate: row.endDate ? new Date(row.endDate).toISOString().split('T')[0] : '',
+    optionDate: row.optionDate ? new Date(row.optionDate).toISOString().split('T')[0] : '',
+    noticePeriodDays: row.noticePeriodDays != null ? String(row.noticePeriodDays) : '',
+    valueTotal: row.valueTotal != null ? String(row.valueTotal) : '',
+    valueAnnual: row.valueAnnual != null ? String(row.valueAnnual) : '',
+    currency: row.currency ?? 'EUR',
+    autoRenewal: row.autoRenewal ?? false,
+    autoRenewalTerms: row.autoRenewalTerms ?? '',
+    retentionYears: row.retentionYears != null ? String(row.retentionYears) : '7',
   }
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Contract bewerken</h1>
-        <p className="text-muted-foreground">{row.reference}</p>
+        <p className="text-muted-foreground">{row.contractNumber?.trim() || row.title}</p>
       </div>
       <ContractForm
         suppliers={[]}

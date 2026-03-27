@@ -169,7 +169,7 @@ export function ContractDocuments({ contract, user }: { contract: any; user: any
                         </div>
                       </div>
                       <Button asChild variant="ghost" size="sm">
-                        <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer">
+                        <a href={`/api/contract-documents/${doc.id}/download`}>
                           <Download className="h-4 w-4" />
                         </a>
                       </Button>
@@ -196,7 +196,7 @@ export function ContractDocuments({ contract, user }: { contract: any; user: any
                         </div>
                       </div>
                       <Button asChild variant="ghost" size="sm">
-                        <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer">
+                        <a href={`/api/contract-documents/${doc.id}/download`}>
                           <Download className="h-4 w-4" />
                         </a>
                       </Button>
@@ -226,7 +226,7 @@ export function ContractDocuments({ contract, user }: { contract: any; user: any
                   </div>
                   <div className="flex items-center gap-2">
                     <Button asChild variant="ghost" size="sm">
-                      <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer">
+                      <a href={`/api/contract-documents/${doc.id}/download`}>
                         <Download className="h-4 w-4" />
                       </a>
                     </Button>

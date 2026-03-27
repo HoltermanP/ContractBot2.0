@@ -16,7 +16,14 @@ type ContractRow = { id: string; title: string; contractNumber: string | null; s
 
 type AskResponse = {
   answer: string
-  sources: { type: string; title: string; detail: string; relevance: string }[]
+  sources: {
+    type: string
+    title: string
+    detail: string
+    relevance: string
+    href?: string | null
+    openInBrowser?: boolean
+  }[]
   limitations: string | null
   followUpQuestions?: string[]
   contextSummary?: {
@@ -33,6 +40,8 @@ type ChatMessage = {
   isError?: boolean
 }
 
+type FaqCluster = { id: string; label: string; askCount: number }
+
 export default function ContractAskPage() {
   const searchParams = useSearchParams()
   const contractIdFromUrl = searchParams.get('contractId')
@@ -45,6 +54,7 @@ export default function ContractAskPage() {
   const [error, setError] = useState<string | null>(null)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
+  const [faqClusters, setFaqClusters] = useState<FaqCluster[]>([])
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -71,6 +81,58 @@ export default function ContractAskPage() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch('/api/ai/ask/faq')
+        if (!res.ok) return
+        const data = await res.json()
+        if (
+          cancelled ||
+          !Array.isArray(data) ||
+          !data.every(
+            (row: unknown) =>
+              row &&
+              typeof row === 'object' &&
+              typeof (row as FaqCluster).id === 'string' &&
+              typeof (row as FaqCluster).label === 'string'
+          )
+        ) {
+          return
+        }
+        setFaqClusters(data as FaqCluster[])
+      } catch {
+        /* ignore */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  async function refreshFaqClusters() {
+    try {
+      const res = await fetch('/api/ai/ask/faq')
+      if (!res.ok) return
+      const data = await res.json()
+      if (
+        Array.isArray(data) &&
+        data.every(
+          (row: unknown) =>
+            row &&
+            typeof row === 'object' &&
+            typeof (row as FaqCluster).id === 'string' &&
+            typeof (row as FaqCluster).label === 'string'
+        )
+      ) {
+        setFaqClusters(data as FaqCluster[])
+      }
+    } catch {
+      /* ignore */
+    }
+  }
 
   const selectedContract = useMemo(
     () => contracts.find((contract) => contract.id === selectedContractId) ?? null,
@@ -159,6 +221,7 @@ export default function ContractAskPage() {
         return
       }
       await typeAssistantAnswer(assistantMessageId, data as AskResponse)
+      void refreshFaqClusters()
     } catch {
       const errMessage = 'Netwerkfout'
       setError(errMessage)
@@ -180,6 +243,41 @@ export default function ContractAskPage() {
   async function handleFollowUpQuestionClick(suggestedQuestion: string) {
     if (loading) return
     await submitQuestion(suggestedQuestion)
+  }
+
+  async function handleFaqClusterClick(clusterId: string) {
+    if (loading) return
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/ai/ask/faq/${encodeURIComponent(clusterId)}`)
+      const data = await res.json()
+      if (!res.ok) {
+        setError(typeof data.error === 'string' ? data.error : 'Kon opgeslagen antwoord niet laden')
+        return
+      }
+      const questionText = typeof data.questionText === 'string' ? data.questionText : ''
+      const response = data.response as AskResponse | undefined
+      if (!response || typeof response.answer !== 'string') {
+        setError('Ongeldig opgeslagen antwoord')
+        return
+      }
+      const ts = Date.now()
+      setChatMessages((prev) => [
+        ...prev,
+        { id: `user-faq-${ts}`, role: 'user', content: questionText },
+        {
+          id: `assistant-faq-${ts}`,
+          role: 'assistant',
+          content: response.answer,
+          response,
+        },
+      ])
+    } catch {
+      setError('Netwerkfout bij laden FAQ-antwoord')
+    } finally {
+      setLoading(false)
+    }
   }
 
   function handleQuestionKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -248,15 +346,15 @@ export default function ContractAskPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[340px_minmax(0,1fr)] gap-6 items-start">
-        <form onSubmit={handleSubmit} className="space-y-4 lg:sticky lg:top-4">
-          <Card className="border-blue-100 bg-blue-50/40">
-            <CardHeader>
-              <CardTitle className="text-base">Vraaginstellingen</CardTitle>
-              <CardDescription>Kies of je automatisch zoekt of in 1 contract.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+        <Card className="border-blue-100 bg-blue-50/40">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Zoekbereik</CardTitle>
+            <CardDescription>Automatisch over contracten, of gefocust op één document.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start">
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
                 <input
                   type="radio"
                   name="scope"
@@ -264,10 +362,10 @@ export default function ContractAskPage() {
                   onChange={() => setScopeMode('auto')}
                   disabled={loading}
                 />
-                <Sparkles className="h-4 w-4 text-amber-500 shrink-0" />
+                <Sparkles className="h-4 w-4 shrink-0 text-amber-500" />
                 Automatisch relevante contracten
               </label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
                 <input
                   type="radio"
                   name="scope"
@@ -277,97 +375,100 @@ export default function ContractAskPage() {
                 />
                 Eén specifiek contract
               </label>
-              {scopeMode === 'single' && (
-                <div className="space-y-2">
-                  <Label htmlFor="contract-select">Contract</Label>
-                  <select
-                    id="contract-select"
-                    value={selectedContractId}
-                    onChange={(e) => setSelectedContractId(e.target.value)}
-                    disabled={loading || contracts.length === 0}
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  >
-                    <option value="">Selecteer een contract</option>
-                    {contracts.map((contract) => (
-                      <option key={contract.id} value={contract.id}>
-                        {contract.title}
-                        {contract.contractNumber ? ` (#${contract.contractNumber})` : ''}
-                      </option>
-                    ))}
-                  </select>
-                  {selectedContract && (
-                    <div className="text-xs text-muted-foreground">
-                      <span>Geselecteerd: </span>
-                      <span className="font-medium text-slate-800">{selectedContract.title}</span>{' '}
-                      <Badge variant="outline" className="text-[10px] ml-1">
-                        {selectedContract.status}
-                      </Badge>
-                    </div>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Stel je vraag</CardTitle>
-              <CardDescription>Je kunt na elk antwoord direct doorvragen.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Textarea
-                placeholder="Typ je vraag..."
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                onKeyDown={handleQuestionKeyDown}
-                className="min-h-[120px] text-base"
-                disabled={loading}
-              />
+            </div>
+            {scopeMode === 'single' && (
               <div className="space-y-2">
-                <Label htmlFor="urls" className="flex items-center gap-2 text-sm">
-                  <Link2 className="h-4 w-4" />
-                  Extra referentie-URL&apos;s (optioneel)
-                </Label>
-                <Textarea
-                  id="urls"
-                  placeholder={'Eén URL per regel\nhttps://example.org/...'}
-                  value={referenceUrls}
-                  onChange={(e) => setReferenceUrls(e.target.value)}
-                  className="min-h-[72px] font-mono text-sm"
-                  disabled={loading}
-                />
+                <Label htmlFor="contract-select">Contract</Label>
+                <select
+                  id="contract-select"
+                  value={selectedContractId}
+                  onChange={(e) => setSelectedContractId(e.target.value)}
+                  disabled={loading || contracts.length === 0}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  <option value="">Selecteer een contract</option>
+                  {contracts.map((contract) => (
+                    <option key={contract.id} value={contract.id}>
+                      {contract.title}
+                      {contract.contractNumber ? ` (#${contract.contractNumber})` : ''}
+                    </option>
+                  ))}
+                </select>
+                {selectedContract && (
+                  <div className="text-xs text-muted-foreground">
+                    <span>Geselecteerd: </span>
+                    <span className="font-medium text-slate-800">{selectedContract.title}</span>{' '}
+                    <Badge variant="outline" className="ml-1 text-[10px]">
+                      {selectedContract.status}
+                    </Badge>
+                  </div>
+                )}
               </div>
-              <Button
-                type="submit"
-                disabled={loading || !question.trim() || (scopeMode === 'single' && !selectedContractId)}
-                className="w-full"
-              >
-                {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                Verstuur vraag
-              </Button>
-            </CardContent>
-          </Card>
-        </form>
+            )}
+          </CardContent>
+        </Card>
 
-        <Card className="min-h-[640px]">
-          <CardHeader>
-            <CardTitle>Chatgesprek</CardTitle>
-            <CardDescription>Rechts zie je alle antwoorden met bronnen en context.</CardDescription>
+        <Card className="flex min-h-[min(70dvh,640px)] flex-col overflow-hidden">
+          <CardHeader className="shrink-0 border-b pb-4">
+            <CardTitle>Gesprek</CardTitle>
+            <CardDescription>
+              Je vragen en antwoorden staan hieronder in één doorlopend gesprek; typ onderaan om door te vragen.
+            </CardDescription>
           </CardHeader>
-          <CardContent ref={chatScrollRef} className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
-            {error ? <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</div> : null}
+          {faqClusters.length > 0 ? (
+            <div className="shrink-0 space-y-2 border-b bg-slate-50/80 px-6 py-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Meestgestelde vragen
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Zelfde onderwerp wordt door AI gegroepeerd (ook bij andere woorden). Tik voor het laatst opgeslagen
+                antwoord — zonder nieuwe AI-rondgang.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {faqClusters.map((c) => (
+                  <Button
+                    key={c.id}
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={loading}
+                    className="h-auto max-w-full justify-start whitespace-normal text-left text-xs sm:text-sm"
+                    onClick={() => handleFaqClusterClick(c.id)}
+                  >
+                    <span className="line-clamp-2">{c.label}</span>
+                    {c.askCount > 1 ? (
+                      <Badge variant="outline" className="ml-2 shrink-0 text-[10px]">
+                        ×{c.askCount}
+                      </Badge>
+                    ) : null}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          <div
+            ref={chatScrollRef}
+            className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4"
+          >
+            {error ? (
+              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</div>
+            ) : null}
             {chatMessages.length === 0 && (
-              <div className="rounded-md border border-dashed px-4 py-8 text-sm text-muted-foreground">
-                Stel links je eerste vraag. Daarna kun je doorvragen in hetzelfde gesprek.
+              <div className="rounded-md border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
+                Typ hieronder je eerste vraag. Antwoorden, bronnen en vervolgsuggesties verschijnen hier in hetzelfde
+                venster.
               </div>
             )}
             {chatMessages.map((message) => (
-              <div key={message.id} className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
+              <div
+                key={message.id}
+                className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}
+              >
                 <div
                   className={
                     message.role === 'user'
-                      ? 'max-w-[85%] rounded-xl bg-blue-600 px-4 py-3 text-sm text-white'
-                      : `max-w-[95%] rounded-xl border px-4 py-3 text-sm ${message.isError ? 'border-red-200 bg-red-50 text-red-800' : 'bg-slate-50 text-slate-900'}`
+                      ? 'max-w-[min(100%,32rem)] rounded-2xl bg-blue-600 px-4 py-3 text-sm text-white shadow-sm'
+                      : `max-w-[min(100%,40rem)] rounded-2xl border px-4 py-3 text-sm shadow-sm ${message.isError ? 'border-red-200 bg-red-50 text-red-800' : 'border-slate-200/80 bg-slate-50 text-slate-900'}`
                   }
                 >
                   {message.role === 'assistant' && !message.isError && message.response ? (
@@ -463,15 +564,50 @@ export default function ContractAskPage() {
                             Gebruikte bronnen
                           </h3>
                           <ul className="space-y-2 text-sm">
-                            {message.response.sources.map((s, i) => (
-                              <li key={i} className="border-l-2 border-blue-200 pl-3">
-                                <div className="font-medium">
-                                  {s.type === 'contract' ? 'Contract' : 'URL'}: {s.title}
-                                </div>
-                                <div className="text-muted-foreground text-xs">{s.detail}</div>
-                                <div className="mt-0.5">{s.relevance}</div>
-                              </li>
-                            ))}
+                            {message.response.sources.map((s, i) => {
+                              const label =
+                                s.type === 'contract'
+                                  ? 'Contract'
+                                  : s.type === 'addendum'
+                                    ? 'Addendum'
+                                    : s.type === 'url'
+                                      ? 'URL'
+                                      : s.type
+                              const titleLine = `${label}: ${s.title}`
+                              return (
+                                <li key={i} className="border-l-2 border-blue-200 pl-3">
+                                  <div className="font-medium">
+                                    {s.href ? (
+                                      <a
+                                        href={s.href}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-blue-700 underline-offset-4 hover:underline"
+                                      >
+                                        {titleLine}
+                                      </a>
+                                    ) : (
+                                      titleLine
+                                    )}
+                                  </div>
+                                  <div className="text-muted-foreground text-xs break-words">
+                                    {s.href ? (
+                                      <a
+                                        href={s.href}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-blue-600 underline-offset-2 hover:underline break-all"
+                                      >
+                                        {s.detail}
+                                      </a>
+                                    ) : (
+                                      s.detail
+                                    )}
+                                  </div>
+                                  <div className="mt-0.5 text-slate-800">{s.relevance}</div>
+                                </li>
+                              )
+                            })}
                           </ul>
                         </div>
                       )}
@@ -511,7 +647,45 @@ export default function ContractAskPage() {
                 </div>
               </div>
             ))}
-          </CardContent>
+          </div>
+          <form
+            onSubmit={handleSubmit}
+            className="shrink-0 space-y-3 border-t bg-background px-4 py-4 sm:px-6"
+          >
+            <div className="space-y-2">
+              <Label htmlFor="urls" className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Link2 className="h-4 w-4" />
+                Extra referentie-URL&apos;s (optioneel)
+              </Label>
+              <Textarea
+                id="urls"
+                placeholder={'Eén URL per regel\nhttps://example.org/...'}
+                value={referenceUrls}
+                onChange={(e) => setReferenceUrls(e.target.value)}
+                className="min-h-[64px] font-mono text-sm"
+                disabled={loading}
+              />
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+              <Textarea
+                id="chat-input"
+                placeholder="Stel je vraag… (Enter om te versturen, Shift+Enter voor nieuwe regel)"
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                onKeyDown={handleQuestionKeyDown}
+                className="min-h-[100px] flex-1 resize-y text-base"
+                disabled={loading}
+              />
+              <Button
+                type="submit"
+                disabled={loading || !question.trim() || (scopeMode === 'single' && !selectedContractId)}
+                className="w-full shrink-0 sm:w-auto sm:min-w-[120px]"
+              >
+                {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                Verstuur
+              </Button>
+            </div>
+          </form>
         </Card>
       </div>
     </div>
