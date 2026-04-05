@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -9,7 +8,6 @@ import { toast } from '@/hooks/use-toast'
 import { Loader2 } from 'lucide-react'
 
 export function CreateOrgForm() {
-  const router = useRouter()
   const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
   const [loading, setLoading] = useState(false)
@@ -32,7 +30,8 @@ export function CreateOrgForm() {
       toast({ title: 'Organisatie aangemaakt', description: 'U werkt nu in de nieuwe organisatie als beheerder.' })
       setName('')
       setSlug('')
-      router.refresh()
+      // Hard reload zodat de OrgSwitcher (client component) de nieuwe org oppikt
+      window.location.href = '/settings/organizations'
     } catch (err: unknown) {
       toast({
         title: err instanceof Error ? err.message : 'Aanmaken mislukt',

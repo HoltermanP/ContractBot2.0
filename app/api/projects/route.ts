@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { getOrCreateUser } from '@/lib/auth'
-import { db, project } from '@/lib/db'
+import { db, project, projects } from '@/lib/db'
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { apiError, apiSuccess } from '@/lib/api-response'
@@ -32,6 +32,28 @@ export async function GET(req: NextRequest) {
       .where(whereClauses.length ? and(...whereClauses) : undefined)
 
     return apiSuccess(list)
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Fout'
+    return apiError(message, 500)
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const user = await getOrCreateUser()
+    if (!user) return apiError('Niet ingelogd', 401)
+
+    const body = await req.json()
+    const name = typeof body.name === 'string' ? body.name.trim() : ''
+    if (!name) return apiError('Projectnaam is verplicht', 400)
+    const description = typeof body.description === 'string' ? body.description.trim() : null
+
+    const [created] = await db
+      .insert(projects)
+      .values({ orgId: user.orgId, name, description: description || null })
+      .returning()
+
+    return apiSuccess(created)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Fout'
     return apiError(message, 500)

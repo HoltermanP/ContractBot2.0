@@ -158,6 +158,7 @@ export interface ContractExtraction {
 
 export async function extractContractData(text: string, orgId: string): Promise<ContractExtraction> {
   return createClaudeJsonCompletion<ContractExtraction>({
+    maxTokens: 8192,
     model: CLAUDE_MODELS.complexAnswer,
     system: `Je bent een expert contractanalist. Analyseer het opgegeven contract en extraheer gestructureerde data als JSON.
 Antwoord ALLEEN in het Nederlands. Gebruik het volgende JSON schema exact:

@@ -5,7 +5,7 @@ import { eq, and, lt, gte, count, sql } from 'drizzle-orm'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { formatDate, formatCurrency, daysUntil, getExpiryBadgeClass } from '@/lib/utils'
-import { FileText, AlertTriangle, CheckCircle, Clock, TrendingUp, MessageCircleQuestion } from 'lucide-react'
+import { FileText, AlertTriangle, CheckCircle, Clock, TrendingUp, Bot, Lightbulb, ShieldAlert, HelpCircle } from 'lucide-react'
 import Link from 'next/link'
 import { DashboardChart } from './dashboard-chart'
 
@@ -94,33 +94,86 @@ export default async function DashboardPage() {
     <div className="space-y-8">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-        <p className="text-muted-foreground">Welkom bij AI-Contractbot — overzicht van uw contractportfolio</p>
+        <p className="text-muted-foreground">Welkom bij AI-Contractagent — overzicht van uw contractportfolio</p>
       </div>
 
-      <Card className="border-blue-100 bg-gradient-to-r from-blue-50 to-indigo-50">
-        <CardContent className="pt-6">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div className="space-y-1">
-              <p className="inline-flex items-center gap-2 text-sm font-medium text-blue-700">
-                <MessageCircleQuestion className="h-4 w-4" />
-                Snel starten met Contractvragen
-              </p>
-              <h2 className="text-lg font-semibold text-slate-900">
-                Stel direct een vraag over een contract of over uw hele portfolio
+      <Card className="border-blue-200 bg-gradient-to-r from-blue-600 to-indigo-600 text-white overflow-hidden">
+        <CardContent className="pt-6 pb-6">
+          <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
+                  <Bot className="h-5 w-5 text-white" />
+                </div>
+                <p className="text-sm font-semibold text-blue-100">AI-Contractagent</p>
+              </div>
+              <h2 className="text-xl font-bold text-white">
+                Stel een vraag over uw contracten
               </h2>
-              <p className="text-sm text-muted-foreground">
-                Kies in de chat eerst het contract en krijg daarna een onderbouwd antwoord met bronnen.
+              <p className="text-sm text-blue-100">
+                De Contractagent beantwoordt vragen op basis van uw contractdocumenten — met bronvermelding en vervolgvragen.
               </p>
             </div>
-            <Link
-              href="/ai/ask"
-              className="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-            >
-              Open Contractvragen
-            </Link>
+            <div className="flex flex-col gap-2 shrink-0">
+              <Link
+                href="/ai/ask"
+                className="inline-flex items-center justify-center gap-2 rounded-md bg-white px-5 py-2.5 text-sm font-semibold text-blue-700 hover:bg-blue-50 shadow"
+              >
+                <Bot className="h-4 w-4" />
+                Open Contractagent
+              </Link>
+            </div>
           </div>
         </CardContent>
       </Card>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <Link href="/ai/faq" className="group block">
+          <Card className="h-full border-slate-200 hover:border-blue-300 hover:shadow-sm transition-all">
+            <CardContent className="pt-5">
+              <div className="flex items-start gap-3">
+                <div className="rounded-lg p-2 bg-purple-50 shrink-0">
+                  <HelpCircle className="h-5 w-5 text-purple-600" />
+                </div>
+                <div>
+                  <div className="font-semibold text-sm text-slate-900 group-hover:text-blue-700">Veelgestelde vragen</div>
+                  <div className="text-xs text-muted-foreground mt-1">Top 10 meestgestelde vragen over uw contracten</div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+        <Link href="/ai/insights" className="group block">
+          <Card className="h-full border-slate-200 hover:border-blue-300 hover:shadow-sm transition-all">
+            <CardContent className="pt-5">
+              <div className="flex items-start gap-3">
+                <div className="rounded-lg p-2 bg-amber-50 shrink-0">
+                  <Lightbulb className="h-5 w-5 text-amber-600" />
+                </div>
+                <div>
+                  <div className="font-semibold text-sm text-slate-900 group-hover:text-blue-700">Praktijkpunten</div>
+                  <div className="text-xs text-muted-foreground mt-1">Belangrijkste contractpunten per project met uitgewerkte voorbeelden</div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+        <Link href="/ai/issues" className="group block">
+          <Card className="h-full border-slate-200 hover:border-blue-300 hover:shadow-sm transition-all">
+            <CardContent className="pt-5">
+              <div className="flex items-start gap-3">
+                <div className="rounded-lg p-2 bg-red-50 shrink-0">
+                  <ShieldAlert className="h-5 w-5 text-red-600" />
+                </div>
+                <div>
+                  <div className="font-semibold text-sm text-slate-900 group-hover:text-blue-700">Contractkwaliteit</div>
+                  <div className="text-xs text-muted-foreground mt-1">Onduidelijkheden, tegenstrijdigheden en vaagheden per contract</div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+      </div>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">

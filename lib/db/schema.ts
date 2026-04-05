@@ -509,6 +509,44 @@ export const contractAskTurns = pgTable(
   })
 )
 
+// AI Praktijkpunten analyses (opgeslagen per contract)
+export const contractInsightsAnalyses = pgTable(
+  'contract_insights_analyses',
+  {
+    id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+    orgId: text('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    contractId: text('contract_id').notNull().references(() => contracts.id, { onDelete: 'cascade' }),
+    contractTitle: varchar('contract_title', { length: 500 }).notNull(),
+    projectName: varchar('project_name', { length: 255 }),
+    resultJson: jsonb('result_json').notNull(),
+    createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    orgIdx: index('contract_insights_org_id_idx').on(table.orgId),
+    contractIdx: index('contract_insights_contract_id_idx').on(table.contractId),
+  })
+)
+
+// AI Contractkwaliteit analyses (opgeslagen per contract)
+export const contractIssuesAnalyses = pgTable(
+  'contract_issues_analyses',
+  {
+    id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+    orgId: text('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    contractId: text('contract_id').notNull().references(() => contracts.id, { onDelete: 'cascade' }),
+    contractTitle: varchar('contract_title', { length: 500 }).notNull(),
+    resultJson: jsonb('result_json').notNull(),
+    issueCount: integer('issue_count').notNull().default(0),
+    createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    orgIdx: index('contract_issues_org_id_idx').on(table.orgId),
+    contractIdx: index('contract_issues_contract_id_idx').on(table.contractId),
+  })
+)
+
 // Dashboard Notifications (in-app)
 export const dashboardNotifications = pgTable('dashboard_notifications', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),

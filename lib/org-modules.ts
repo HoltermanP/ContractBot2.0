@@ -1,6 +1,9 @@
 export const ORG_MODULE_KEYS = [
   'dashboard',
   'aiAsk',
+  'aiFaq',
+  'aiInsights',
+  'aiIssues',
   'projects',
   'contracts',
   'suppliers',
@@ -15,7 +18,10 @@ export type OrgModuleVisibility = Record<OrgModuleKey, boolean>
 
 export const ORG_MODULE_LABELS: Record<OrgModuleKey, string> = {
   dashboard: 'Dashboard',
-  aiAsk: 'Contractvragen',
+  aiAsk: 'Contractagent',
+  aiFaq: 'Veelgestelde vragen',
+  aiInsights: 'Praktijkpunten',
+  aiIssues: 'Contractkwaliteit',
   projects: 'Projecten',
   contracts: 'Contracten',
   suppliers: 'Leveranciers',
@@ -28,6 +34,9 @@ export const ORG_MODULE_LABELS: Record<OrgModuleKey, string> = {
 export const DEFAULT_ORG_MODULE_VISIBILITY: OrgModuleVisibility = {
   dashboard: true,
   aiAsk: true,
+  aiFaq: true,
+  aiInsights: true,
+  aiIssues: true,
   projects: true,
   contracts: true,
   suppliers: true,
@@ -74,6 +83,9 @@ export function isPathAllowedByModules(pathname: string, visibility: OrgModuleVi
   const checks: Array<{ key: OrgModuleKey; matches: boolean }> = [
     { key: 'dashboard', matches: pathname === '/dashboard' },
     { key: 'aiAsk', matches: pathname === '/ai/ask' || pathname.startsWith('/ai/ask/') },
+    { key: 'aiFaq', matches: pathname === '/ai/faq' || pathname.startsWith('/ai/faq/') },
+    { key: 'aiInsights', matches: pathname === '/ai/insights' || pathname.startsWith('/ai/insights/') },
+    { key: 'aiIssues', matches: pathname === '/ai/issues' || pathname.startsWith('/ai/issues/') },
     { key: 'projects', matches: pathname === '/projects' || pathname.startsWith('/projects/') },
     { key: 'contracts', matches: pathname === '/contracts' || pathname.startsWith('/contracts/') },
     { key: 'suppliers', matches: pathname === '/suppliers' || pathname.startsWith('/suppliers/') },

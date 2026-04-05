@@ -89,6 +89,10 @@ export function ContractForm({
       fd.append('file', file)
       const res = await fetch('/api/ai/extract', { method: 'POST', body: fd })
       const json = await res.json()
+      if (!res.ok) {
+        toast({ title: 'Extractie mislukt', description: json.error ?? 'Onbekende fout', variant: 'destructive' })
+        return
+      }
       if (json.extraction) {
         const e = json.extraction
         if (e.start_date) set('startDate', e.start_date.split('T')[0])
@@ -103,9 +107,11 @@ export function ContractForm({
         if (e.auto_renewal_terms) set('autoRenewalTerms', e.auto_renewal_terms)
         if (e.parties?.[0]?.name && !data.title) set('title', e.parties[0].name)
         toast({ title: 'AI-extractie geslaagd', description: 'Velden zijn automatisch ingevuld op basis van het document.' })
+      } else {
+        toast({ title: 'Extractie leverde geen resultaat', description: 'Controleer of het bestand leesbare tekst bevat.', variant: 'destructive' })
       }
     } catch {
-      toast({ title: 'Extractie mislukt', variant: 'destructive' })
+      toast({ title: 'Extractie mislukt', description: 'Netwerkfout of onleesbaar bestand.', variant: 'destructive' })
     } finally {
       setExtracting(false)
     }

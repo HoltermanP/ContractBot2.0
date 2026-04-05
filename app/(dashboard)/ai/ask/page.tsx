@@ -6,7 +6,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Loader2, MessageCircleQuestion, Sparkles, Link2, Copy, Check } from 'lucide-react'
+import { Loader2, Bot, Sparkles, Link2, Copy, Check } from 'lucide-react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import DOMPurify from 'dompurify'
@@ -62,8 +62,9 @@ export default function ContractAskPage() {
     ;(async () => {
       try {
         const res = await fetch('/api/contracts')
-        const data = await res.json()
-        if (!cancelled && Array.isArray(data)) {
+        const json = await res.json()
+        const data = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : []
+        if (!cancelled && data.length >= 0) {
           setContracts(
             data.map((c: ContractRow) => ({
               id: c.id,
@@ -337,8 +338,8 @@ export default function ContractAskPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-          <MessageCircleQuestion className="h-7 w-7 text-blue-600" />
-          Contractvragen
+          <Bot className="h-7 w-7 text-blue-600" />
+          Contractagent
         </h1>
         <p className="text-muted-foreground mt-1">
           Stel een vraag over uw contracten. Het antwoord wordt onderbouwd met de contractdocumenten en optioneel met
