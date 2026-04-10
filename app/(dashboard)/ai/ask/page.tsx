@@ -6,13 +6,23 @@ import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Loader2, Bot, Sparkles, Link2, Copy, Check } from 'lucide-react'
+import { Loader2, Bot, Link2, Copy, Check, FolderOpen, Building2, FileText } from 'lucide-react'
+import { Input } from '@/components/ui/input'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import DOMPurify from 'dompurify'
 import ReactMarkdown from 'react-markdown'
 
-type ContractRow = { id: string; title: string; contractNumber: string | null; status: string }
+type ContractRow = {
+  id: string
+  title: string
+  contractNumber: string | null
+  status: string
+  projectId: string | null
+  projectName: string | null
+}
+
+type ProjectRow = { id: string; name: string }
 
 type AskResponse = {
   answer: string
@@ -29,6 +39,7 @@ type AskResponse = {
   contextSummary?: {
     contractsUsed: { id: string; title: string; detail: string }[]
     urlsUsed: { url: string }[]
+    projectScope?: { id: string; name: string }
   }
 }
 
@@ -42,12 +53,19 @@ type ChatMessage = {
 
 type FaqCluster = { id: string; label: string; askCount: number }
 
+type ScopeMode = 'org' | 'project' | 'single'
+
 export default function ContractAskPage() {
   const searchParams = useSearchParams()
   const contractIdFromUrl = searchParams.get('contractId')
+  const projectIdFromUrl = searchParams.get('projectId')
   const [question, setQuestion] = useState('')
   const [contracts, setContracts] = useState<ContractRow[]>([])
-  const [scopeMode, setScopeMode] = useState<'auto' | 'single'>('auto')
+  const [projects, setProjects] = useState<ProjectRow[]>([])
+  const [scopeMode, setScopeMode] = useState<ScopeMode>('org')
+  const [selectedScopeProjectId, setSelectedScopeProjectId] = useState('')
+  const [contractFilterProjectId, setContractFilterProjectId] = useState('')
+  const [contractSearch, setContractSearch] = useState('')
   const [selectedContractId, setSelectedContractId] = useState('')
   const [referenceUrls, setReferenceUrls] = useState('')
   const [loading, setLoading] = useState(false)
@@ -66,11 +84,41 @@ export default function ContractAskPage() {
         const data = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : []
         if (!cancelled && data.length >= 0) {
           setContracts(
-            data.map((c: ContractRow) => ({
+            data.map((c: ContractRow & { project?: { id: string; name: string } | null }) => ({
               id: c.id,
               title: c.title,
               contractNumber: c.contractNumber,
               status: c.status,
+              projectId: c.projectId ?? c.project?.id ?? null,
+              projectName: c.project?.name ?? null,
+            }))
+          )
+        }
+      } catch {
+        /* ignore */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch('/api/projects')
+        const json = await res.json()
+        const data = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : []
+        if (
+          !cancelled &&
+          Array.isArray(data) &&
+          data.every((row: unknown) => row && typeof row === 'object' && typeof (row as ProjectRow).id === 'string')
+        ) {
+          setProjects(
+            (data as ProjectRow[]).map((p) => ({
+              id: p.id,
+              name: p.name,
             }))
           )
         }
@@ -140,14 +188,53 @@ export default function ContractAskPage() {
     [contracts, selectedContractId]
   )
 
-  useEffect(() => {
-    if (!contractIdFromUrl || contracts.length === 0) return
-    const exists = contracts.some((contract) => contract.id === contractIdFromUrl)
-    if (exists) {
-      setScopeMode('single')
-      setSelectedContractId(contractIdFromUrl)
+  const visibleContracts = useMemo(() => {
+    let list = contracts
+    if (scopeMode === 'single' && contractFilterProjectId) {
+      list = list.filter((c) => c.projectId === contractFilterProjectId)
     }
-  }, [contractIdFromUrl, contracts])
+    const s = contractSearch.trim().toLowerCase()
+    if (s) {
+      list = list.filter(
+        (c) =>
+          c.title.toLowerCase().includes(s) ||
+          (c.contractNumber && c.contractNumber.toLowerCase().includes(s)) ||
+          (c.projectName && c.projectName.toLowerCase().includes(s))
+      )
+    }
+    return list
+  }, [contracts, scopeMode, contractFilterProjectId, contractSearch])
+
+  const contractOptions = useMemo(() => {
+    const sel = contracts.find((c) => c.id === selectedContractId)
+    if (sel && !visibleContracts.some((c) => c.id === sel.id)) {
+      return [sel, ...visibleContracts]
+    }
+    return visibleContracts
+  }, [visibleContracts, contracts, selectedContractId])
+
+  const selectedScopeProject = useMemo(
+    () => projects.find((p) => p.id === selectedScopeProjectId) ?? null,
+    [projects, selectedScopeProjectId]
+  )
+
+  useEffect(() => {
+    if (contracts.length === 0) return
+    if (contractIdFromUrl) {
+      const exists = contracts.some((contract) => contract.id === contractIdFromUrl)
+      if (exists) {
+        setScopeMode('single')
+        setSelectedContractId(contractIdFromUrl)
+        const row = contracts.find((c) => c.id === contractIdFromUrl)
+        if (row?.projectId) setContractFilterProjectId(row.projectId)
+      }
+      return
+    }
+    if (projectIdFromUrl && projects.some((p) => p.id === projectIdFromUrl)) {
+      setScopeMode('project')
+      setSelectedScopeProjectId(projectIdFromUrl)
+    }
+  }, [contractIdFromUrl, projectIdFromUrl, contracts, projects])
 
   function scrollChatToBottom() {
     const el = chatScrollRef.current
@@ -181,6 +268,7 @@ export default function ContractAskPage() {
     const q = rawQuestion.trim()
     if (!q) return
     if (scopeMode === 'single' && !selectedContractId) return
+    if (scopeMode === 'project' && !selectedScopeProjectId) return
 
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -200,15 +288,20 @@ export default function ContractAskPage() {
         .map((l) => l.trim())
         .filter(Boolean)
 
+      const payload: Record<string, unknown> = {
+        question: q,
+        contractIds,
+        portfolioMode: scopeMode !== 'single',
+        referenceUrls: urls,
+      }
+      if (scopeMode === 'project' && selectedScopeProjectId) {
+        payload.projectId = selectedScopeProjectId
+      }
+
       const res = await fetch('/api/ai/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question: q,
-          contractIds,
-          portfolioMode: scopeMode === 'auto',
-          referenceUrls: urls,
-        }),
+        body: JSON.stringify(payload),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -348,10 +441,37 @@ export default function ContractAskPage() {
       </div>
 
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+        <Card className="border-slate-200 bg-white">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Aan de slag in drie stappen</CardTitle>
+            <CardDescription>
+              Project → contract met documenten → hier uw vraag stellen. Zo blijft alles per bedrijf en dossier overzichtelijk.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground space-y-2 pb-4">
+            <p className="flex gap-2">
+              <span className="font-semibold text-slate-700 shrink-0">1.</span>
+              Maak een project aan onder Projecten (bijv. per leverancier of dossier); het standaardproject &quot;Algemeen&quot;
+              bestaat al.
+            </p>
+            <p className="flex gap-2">
+              <span className="font-semibold text-slate-700 shrink-0">2.</span>
+              Voeg contracten toe met PDF- of DOCX-documenten zodat de agent de tekst kan gebruiken.
+            </p>
+            <p className="flex gap-2">
+              <span className="font-semibold text-slate-700 shrink-0">3.</span>
+              Kies hieronder het zoekbereik en stel uw vraag; bronnen en beperkingen staan bij elk antwoord.
+            </p>
+          </CardContent>
+        </Card>
+
         <Card className="border-blue-100 bg-blue-50/40">
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Zoekbereik</CardTitle>
-            <CardDescription>Automatisch over contracten, of gefocust op één document.</CardDescription>
+            <CardDescription>
+              Hele organisatie, één project, of één contract — de agent selecteert zelf relevante documenten binnen die
+              keuze (behalve bij één contract).
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start">
@@ -359,12 +479,23 @@ export default function ContractAskPage() {
                 <input
                   type="radio"
                   name="scope"
-                  checked={scopeMode === 'auto'}
-                  onChange={() => setScopeMode('auto')}
+                  checked={scopeMode === 'org'}
+                  onChange={() => setScopeMode('org')}
                   disabled={loading}
                 />
-                <Sparkles className="h-4 w-4 shrink-0 text-amber-500" />
-                Automatisch relevante contracten
+                <Building2 className="h-4 w-4 shrink-0 text-slate-600" />
+                Hele organisatie (slimme selectie)
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="scope"
+                  checked={scopeMode === 'project'}
+                  onChange={() => setScopeMode('project')}
+                  disabled={loading}
+                />
+                <FolderOpen className="h-4 w-4 shrink-0 text-amber-600" />
+                Dit project
               </label>
               <label className="flex cursor-pointer items-center gap-2 text-sm">
                 <input
@@ -374,36 +505,98 @@ export default function ContractAskPage() {
                   onChange={() => setScopeMode('single')}
                   disabled={loading}
                 />
+                <FileText className="h-4 w-4 shrink-0 text-blue-600" />
                 Eén specifiek contract
               </label>
             </div>
-            {scopeMode === 'single' && (
+
+            {scopeMode === 'project' && (
               <div className="space-y-2">
-                <Label htmlFor="contract-select">Contract</Label>
+                <Label htmlFor="scope-project-select">Project</Label>
                 <select
-                  id="contract-select"
-                  value={selectedContractId}
-                  onChange={(e) => setSelectedContractId(e.target.value)}
-                  disabled={loading || contracts.length === 0}
+                  id="scope-project-select"
+                  value={selectedScopeProjectId}
+                  onChange={(e) => setSelectedScopeProjectId(e.target.value)}
+                  disabled={loading || projects.length === 0}
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 >
-                  <option value="">Selecteer een contract</option>
-                  {contracts.map((contract) => (
-                    <option key={contract.id} value={contract.id}>
-                      {contract.title}
-                      {contract.contractNumber ? ` (#${contract.contractNumber})` : ''}
+                  <option value="">Selecteer een project</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
                     </option>
                   ))}
                 </select>
-                {selectedContract && (
-                  <div className="text-xs text-muted-foreground">
-                    <span>Geselecteerd: </span>
-                    <span className="font-medium text-slate-800">{selectedContract.title}</span>{' '}
-                    <Badge variant="outline" className="ml-1 text-[10px]">
-                      {selectedContract.status}
-                    </Badge>
-                  </div>
+                {selectedScopeProject && (
+                  <p className="text-xs text-muted-foreground">
+                    Alleen contracten in <span className="font-medium text-slate-800">{selectedScopeProject.name}</span>{' '}
+                    worden automatisch meegenomen (max. enkele documenten per rondgang).
+                  </p>
                 )}
+              </div>
+            )}
+
+            {scopeMode === 'single' && (
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label htmlFor="contract-filter-project">Filter op project (optioneel)</Label>
+                  <select
+                    id="contract-filter-project"
+                    value={contractFilterProjectId}
+                    onChange={(e) => {
+                      setContractFilterProjectId(e.target.value)
+                      setSelectedContractId('')
+                    }}
+                    disabled={loading || projects.length === 0}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="">Alle projecten</option>
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="contract-search">Zoek in titel of nummer</Label>
+                  <Input
+                    id="contract-search"
+                    placeholder="Typ om de lijst te filteren…"
+                    value={contractSearch}
+                    onChange={(e) => setContractSearch(e.target.value)}
+                    disabled={loading}
+                    className="text-sm"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="contract-select">Contract</Label>
+                  <select
+                    id="contract-select"
+                    value={selectedContractId}
+                    onChange={(e) => setSelectedContractId(e.target.value)}
+                    disabled={loading || contracts.length === 0}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="">Selecteer een contract</option>
+                    {contractOptions.map((contract) => (
+                      <option key={contract.id} value={contract.id}>
+                        {contract.projectName ? `[${contract.projectName}] ` : ''}
+                        {contract.title}
+                        {contract.contractNumber ? ` (#${contract.contractNumber})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedContract && (
+                    <div className="text-xs text-muted-foreground">
+                      <span>Geselecteerd: </span>
+                      <span className="font-medium text-slate-800">{selectedContract.title}</span>{' '}
+                      <Badge variant="outline" className="ml-1 text-[10px]">
+                        {selectedContract.status}
+                      </Badge>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </CardContent>
@@ -530,6 +723,20 @@ export default function ContractAskPage() {
 
                   {message.role === 'assistant' && message.response && (
                     <div className="mt-4 space-y-4">
+                      {message.response.contextSummary?.projectScope && (
+                        <div className="rounded-md border border-blue-200 bg-blue-50/90 px-3 py-2 text-xs text-slate-800">
+                          <span className="font-semibold">Zoekbereik: </span>
+                          Project{' '}
+                          <span className="font-medium">{message.response.contextSummary.projectScope.name}</span>
+                          <Link
+                            href={`/projects/${message.response.contextSummary.projectScope.id}`}
+                            className="ml-2 text-blue-700 underline-offset-2 hover:underline"
+                          >
+                            Open project
+                          </Link>
+                        </div>
+                      )}
+
                       {message.response.limitations && (
                         <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                           {message.response.limitations}
@@ -617,7 +824,7 @@ export default function ContractAskPage() {
                         <div className="text-xs text-muted-foreground border-t pt-3 space-y-1">
                           {message.response.contextSummary.contractsUsed.length > 0 && (
                             <p>
-                              Documenten:{' '}
+                              Gebruikte contracten in deze rondgang:{' '}
                               {[...new Map(message.response.contextSummary.contractsUsed.map((c) => [c.id, c])).values()].map((c) => (
                                 <Link key={c.id} href={`/contracts/${c.id}`} className="text-blue-600 hover:underline mr-2">
                                   {c.title}
@@ -679,7 +886,12 @@ export default function ContractAskPage() {
               />
               <Button
                 type="submit"
-                disabled={loading || !question.trim() || (scopeMode === 'single' && !selectedContractId)}
+                disabled={
+                  loading ||
+                  !question.trim() ||
+                  (scopeMode === 'single' && !selectedContractId) ||
+                  (scopeMode === 'project' && !selectedScopeProjectId)
+                }
                 className="w-full shrink-0 sm:w-auto sm:min-w-[120px]"
               >
                 {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}

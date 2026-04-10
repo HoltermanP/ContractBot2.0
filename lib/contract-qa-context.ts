@@ -104,6 +104,29 @@ export async function contractIdsWithDocumentsFallback(
   return (results.rows as { id: string }[]).map((r) => r.id)
 }
 
+export async function contractIdsWithDocumentsFallbackForProject(
+  orgId: string,
+  projectId: string,
+  limit: number,
+  options?: { readerMode?: boolean }
+): Promise<string[]> {
+  const rs = readerStatusClause(options?.readerMode)
+  const results = await db.execute(sql`
+    SELECT c.id
+    FROM contracts c
+    WHERE c.org_id = ${orgId}
+      AND c.project_id = ${projectId}
+      ${rs}
+      AND EXISTS (
+        SELECT 1 FROM contract_documents d
+        WHERE d.contract_id = c.id AND d.is_current = true
+      )
+    ORDER BY c.updated_at DESC NULLS LAST
+    LIMIT ${limit}
+  `)
+  return (results.rows as { id: string }[]).map((r) => r.id)
+}
+
 /** Semantisch de meest relevante contract-id's voor een vraag (vereist embeddings). */
 export async function semanticTopContractIds(
   orgId: string,
@@ -128,6 +151,41 @@ export async function semanticTopContractIds(
     SELECT id
     FROM contracts
     WHERE org_id = ${orgId}
+      AND content_embedding IS NOT NULL
+      ${readerClause}
+    ORDER BY content_embedding <=> ${JSON.stringify(embedding)}::vector
+    LIMIT ${limit}
+  `)
+  return (results.rows as { id: string }[]).map((r) => r.id)
+}
+
+/** Semantisch top-contracten binnen één project (vereist embeddings op die contracten). */
+export async function semanticTopContractIdsForProject(
+  orgId: string,
+  projectId: string,
+  question: string,
+  limit: number,
+  options?: { readerMode?: boolean }
+): Promise<string[]> {
+  const readerClause = readerStatusClauseContracts(options?.readerMode)
+  const anyIndexed = await db.execute(sql`
+    SELECT id FROM contracts
+    WHERE org_id = ${orgId}
+      AND project_id = ${projectId}
+      AND content_embedding IS NOT NULL
+      ${readerClause}
+    LIMIT 1
+  `)
+  if ((anyIndexed.rows as { id: string }[]).length === 0) {
+    return []
+  }
+
+  const embedding = await getEmbedding(question)
+  const results = await db.execute(sql`
+    SELECT id
+    FROM contracts
+    WHERE org_id = ${orgId}
+      AND project_id = ${projectId}
       AND content_embedding IS NOT NULL
       ${readerClause}
     ORDER BY content_embedding <=> ${JSON.stringify(embedding)}::vector

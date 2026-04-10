@@ -15,21 +15,33 @@ export async function GET(req: NextRequest) {
     const user = await getOrCreateUser()
     if (!user) return apiError('Niet ingelogd', 401)
 
-    const parsed = querySchema.safeParse({
-      organisationId: req.nextUrl.searchParams.get('organisationId') ?? undefined,
-      programmeId: req.nextUrl.searchParams.get('programmeId') ?? undefined,
+    const organisationId = req.nextUrl.searchParams.get('organisationId')
+    const programmeId = req.nextUrl.searchParams.get('programmeId')
+
+    if (organisationId ?? programmeId) {
+      const parsed = querySchema.safeParse({
+        organisationId: organisationId ?? undefined,
+        programmeId: programmeId ?? undefined,
+      })
+      if (!parsed.success) return apiError(parsed.error.flatten().formErrors.join(', ') || 'Ongeldige query', 400)
+
+      const { organisationId: oId, programmeId: pId } = parsed.data
+      const whereClauses = []
+      if (oId) whereClauses.push(eq(project.organisationId, oId))
+      if (pId) whereClauses.push(eq(project.programmeId, pId))
+
+      const list = await db
+        .select()
+        .from(project)
+        .where(whereClauses.length ? and(...whereClauses) : undefined)
+
+      return apiSuccess(list)
+    }
+
+    const list = await db.query.projects.findMany({
+      where: eq(projects.orgId, user.orgId),
+      orderBy: (p, { asc: ascFn }) => [ascFn(p.name)],
     })
-    if (!parsed.success) return apiError(parsed.error.flatten().formErrors.join(', ') || 'Ongeldige query', 400)
-
-    const { organisationId, programmeId } = parsed.data
-    const whereClauses = []
-    if (organisationId) whereClauses.push(eq(project.organisationId, organisationId))
-    if (programmeId) whereClauses.push(eq(project.programmeId, programmeId))
-
-    const list = await db
-      .select()
-      .from(project)
-      .where(whereClauses.length ? and(...whereClauses) : undefined)
 
     return apiSuccess(list)
   } catch (err: unknown) {

@@ -28,12 +28,14 @@ export function NewProjectForm() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: name.trim(), description: description.trim() || undefined }),
       })
-      const json = await res.json()
+      const json = await res.json() as { data?: { id?: string }; error?: string | null }
       if (!res.ok) throw new Error(json.error ?? 'Fout')
+      const id = json.data?.id
+      if (!id) throw new Error('Geen project-id in antwoord')
       toast({ title: 'Project aangemaakt' })
       setName('')
       setDescription('')
-      router.push(`/projects/${json.id}`)
+      router.push(`/projects/${id}`)
       router.refresh()
     } catch (err: unknown) {
       toast({

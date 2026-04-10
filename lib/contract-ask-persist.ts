@@ -18,6 +18,7 @@ export type ContractAskResponsePayload = {
   contextSummary?: {
     contractsUsed: { id: string; title: string; detail: string }[]
     urlsUsed: { url: string }[]
+    projectScope?: { id: string; name: string }
   }
 }
 

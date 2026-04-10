@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getOrCreateUser } from '@/lib/auth'
 import { answerContractQuestion } from '@/lib/openai'
+import { db, contracts, projects } from '@/lib/db'
+import { and, eq } from 'drizzle-orm'
 import {
   contractIdsWithDocumentsFallback,
+  contractIdsWithDocumentsFallbackForProject,
   loadContractTextBlocks,
   semanticTopContractIds,
+  semanticTopContractIdsForProject,
   type QaContextBlock,
 } from '@/lib/contract-qa-context'
 import { fetchReferenceUrlAsText } from '@/lib/fetch-reference-url'
@@ -36,6 +40,18 @@ export async function POST(req: NextRequest) {
     const contractIdsRaw = Array.isArray(body.contractIds) ? body.contractIds : []
     const contractIds = [...new Set(contractIdsRaw.filter((id: unknown) => typeof id === 'string' && id.length > 0))] as string[]
 
+    const projectIdRaw = typeof body.projectId === 'string' ? body.projectId.trim() : ''
+    const projectId = projectIdRaw.length > 0 ? projectIdRaw : undefined
+
+    let projectScopeMeta: { id: string; name: string } | undefined
+    if (projectId) {
+      const proj = await db.query.projects.findFirst({
+        where: and(eq(projects.id, projectId), eq(projects.orgId, user.orgId)),
+      })
+      if (!proj) return NextResponse.json({ error: 'Project niet gevonden' }, { status: 400 })
+      projectScopeMeta = { id: proj.id, name: proj.name }
+    }
+
     const portfolioMode = body.portfolioMode !== false && contractIds.length === 0
 
     const urlsRaw = Array.isArray(body.referenceUrls) ? body.referenceUrls : []
@@ -48,12 +64,46 @@ export async function POST(req: NextRequest) {
 
     let contractBlocks: QaContextBlock[] = []
 
-    if (portfolioMode) {
-      let topIds = await semanticTopContractIds(user.orgId, question, MAX_CONTEXT_CONTRACTS, { readerMode })
-      if (topIds.length === 0) {
-        topIds = await contractIdsWithDocumentsFallback(user.orgId, MAX_CONTEXT_CONTRACTS, { readerMode })
+    if (contractIds.length > 0) {
+      if (projectId) {
+        for (const cid of contractIds) {
+          const row = await db.query.contracts.findFirst({
+            where: and(eq(contracts.id, cid), eq(contracts.orgId, user.orgId)),
+          })
+          if (!row || row.projectId !== projectId) {
+            return NextResponse.json(
+              { error: 'Een of meer contracten horen niet bij het gekozen project.' },
+              { status: 400 }
+            )
+          }
+        }
       }
-      contractBlocks = await loadContractTextBlocks(user.orgId, topIds, { hideArchivedForReader: readerMode })
+      contractBlocks = await loadContractTextBlocks(user.orgId, contractIds, { hideArchivedForReader: readerMode })
+    } else if (portfolioMode) {
+      if (projectId) {
+        let topIds = await semanticTopContractIdsForProject(
+          user.orgId,
+          projectId,
+          question,
+          MAX_CONTEXT_CONTRACTS,
+          { readerMode }
+        )
+        if (topIds.length === 0) {
+          topIds = await contractIdsWithDocumentsFallbackForProject(
+            user.orgId,
+            projectId,
+            MAX_CONTEXT_CONTRACTS,
+            { readerMode }
+          )
+        }
+        contractBlocks = await loadContractTextBlocks(user.orgId, topIds, { hideArchivedForReader: readerMode })
+      } else {
+        let topIds = await semanticTopContractIds(user.orgId, question, MAX_CONTEXT_CONTRACTS, { readerMode })
+        if (topIds.length === 0) {
+          topIds = await contractIdsWithDocumentsFallback(user.orgId, MAX_CONTEXT_CONTRACTS, { readerMode })
+        }
+        contractBlocks = await loadContractTextBlocks(user.orgId, topIds, { hideArchivedForReader: readerMode })
+      }
     } else {
       contractBlocks = await loadContractTextBlocks(user.orgId, contractIds, { hideArchivedForReader: readerMode })
     }
@@ -102,6 +152,7 @@ export async function POST(req: NextRequest) {
       contextSummary: {
         contractsUsed: dedupeContractsById(contractBlocks),
         urlsUsed: urlBlocks.map((b) => ({ url: b.detail })),
+        ...(projectScopeMeta ? { projectScope: projectScopeMeta } : {}),
       },
     }
 

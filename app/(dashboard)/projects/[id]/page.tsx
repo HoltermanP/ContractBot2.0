@@ -7,7 +7,7 @@ import { notFound, redirect } from 'next/navigation'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { formatDate, formatCurrency, STATUS_LABELS } from '@/lib/utils'
-import { Plus } from 'lucide-react'
+import { Bot, Plus } from 'lucide-react'
 import { canMutateContractData } from '@/lib/permissions'
 
 export default async function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -45,14 +45,22 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
           <h1 className="text-2xl font-bold text-gray-900">{project.name}</h1>
           {project.description && <p className="text-muted-foreground mt-1">{project.description}</p>}
         </div>
-        {canMutateContractData(user.role) && (
-          <Button asChild>
-            <Link href={`/contracts/new?project=${project.id}`}>
-              <Plus className="h-4 w-4 mr-2" />
-              Contract in dit project
+        <div className="flex flex-wrap gap-2 justify-end">
+          <Button asChild variant="secondary">
+            <Link href={`/ai/ask?projectId=${project.id}`}>
+              <Bot className="h-4 w-4 mr-2" />
+              Vraag over dit project
             </Link>
           </Button>
-        )}
+          {canMutateContractData(user.role) && (
+            <Button asChild>
+              <Link href={`/contracts/new?project=${project.id}`}>
+                <Plus className="h-4 w-4 mr-2" />
+                Contract in dit project
+              </Link>
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
