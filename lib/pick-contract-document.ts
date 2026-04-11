@@ -1,4 +1,4 @@
-/** Addenda hebben voorrang op hoofdcontract bij getoonde AI-extractie. */
+/** Addendum > extra contractstuk > hoofdcontract voor getoonde AI-extractie. */
 export function pickDocumentWithAiExtract(documents: any[] | undefined): any {
   const current = documents?.filter((d) => d.isCurrent) ?? []
   const sortedCurrent = [...current].sort(
@@ -6,6 +6,7 @@ export function pickDocumentWithAiExtract(documents: any[] | undefined): any {
   )
   return (
     sortedCurrent.find((d) => d.documentKind === 'addendum' && d.aiExtractedDataJson) ??
-    sortedCurrent.find((d) => d.documentKind !== 'addendum' && d.aiExtractedDataJson)
+    sortedCurrent.find((d) => d.documentKind === 'contractstuk' && d.aiExtractedDataJson) ??
+    sortedCurrent.find((d) => d.documentKind === 'hoofdcontract' && d.aiExtractedDataJson)
   )
 }

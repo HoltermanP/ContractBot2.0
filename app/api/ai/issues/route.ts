@@ -137,7 +137,15 @@ export async function POST(req: NextRequest) {
     }
 
     const contextText = blocks
-      .map((b) => `--- ${b.kind === 'addendum' ? 'Addendum' : 'Contract'}: ${b.title} (${b.detail}) ---\n${b.text}`)
+      .map((b) => {
+        const label =
+          b.kind === 'addendum'
+            ? 'Addendum'
+            : b.kind === 'contractstuk'
+              ? 'Extra contractstuk'
+              : 'Contract'
+        return `--- ${label}: ${b.title} (${b.detail}) ---\n${b.text}`
+      })
       .join('\n\n')
 
     const result = await createClaudeJsonCompletion<{ summary: string; issues: ContractIssue[] }>({

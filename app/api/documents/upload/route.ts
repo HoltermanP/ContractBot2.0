@@ -22,8 +22,12 @@ export async function POST(req: NextRequest) {
     const file = formData.get('file') as File | null
     const contractId = typeof formData.get('contractId') === 'string' ? (formData.get('contractId') as string).trim() : ''
     const rawKind = formData.get('documentKind')
-    const documentKind: 'hoofdcontract' | 'addendum' =
-      rawKind === 'addendum' ? 'addendum' : 'hoofdcontract'
+    const documentKind: 'hoofdcontract' | 'contractstuk' | 'addendum' =
+      rawKind === 'addendum'
+        ? 'addendum'
+        : rawKind === 'contractstuk'
+          ? 'contractstuk'
+          : 'hoofdcontract'
 
     if (!file) return NextResponse.json({ error: 'Geen bestand ontvangen' }, { status: 400 })
     if (!contractId) return NextResponse.json({ error: 'contractId ontbreekt' }, { status: 400 })
@@ -59,17 +63,20 @@ export async function POST(req: NextRequest) {
       contentType: file.type || (ext === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
     })
 
-    // Mark previous documents of same kind as not current
-    await db
-      .update(contractDocuments)
-      .set({ isCurrent: false })
-      .where(
-        and(
-          eq(contractDocuments.contractId, contractId),
-          eq(contractDocuments.documentKind, documentKind),
-          eq(contractDocuments.isCurrent, true)
+    // Alleen bij een nieuw hoofdcontract het vorige hoofdcontract als niet-actueel markeren.
+    // Extra contractstukken en addenda mogen naast elkaar actueel blijven (meerdere bestanden).
+    if (documentKind === 'hoofdcontract') {
+      await db
+        .update(contractDocuments)
+        .set({ isCurrent: false })
+        .where(
+          and(
+            eq(contractDocuments.contractId, contractId),
+            eq(contractDocuments.documentKind, 'hoofdcontract'),
+            eq(contractDocuments.isCurrent, true)
+          )
         )
-      )
+    }
 
     // Get next version number
     const versionNumber = await nextDocumentVersionNumber(contractId)
@@ -99,6 +106,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ id: doc.id, filename: doc.filename, versionNumber })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Upload mislukt'
+    const lower = message.toLowerCase()
+    const enumOrKindError =
+      lower.includes('document_kind') ||
+      lower.includes('invalid input value for enum') ||
+      lower.includes('contractstuk')
+    if (enumOrKindError) {
+      console.error('[documents/upload]', err)
+      return NextResponse.json(
+        {
+          error:
+            'Het documenttype wordt door de database nog niet herkend. Voer lokaal of op de server uit: npm run db:migrate (migratie met extra documenttype contractstuk).',
+        },
+        { status: 500 }
+      )
+    }
+    console.error('[documents/upload]', err)
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }

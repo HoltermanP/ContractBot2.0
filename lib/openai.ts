@@ -216,7 +216,7 @@ export async function getEmbedding(text: string): Promise<number[]> {
 }
 
 export interface QaSourceRef {
-  type: 'contract' | 'addendum' | 'url'
+  type: 'contract' | 'contractstuk' | 'addendum' | 'url'
   title: string
   detail: string
   relevance: string
@@ -279,7 +279,7 @@ function estimateQuestionComplexityHeuristically(question: string, sourceCount: 
 
 async function determineQuestionComplexity(
   question: string,
-  contextBlocks: { kind: 'contract' | 'addendum' | 'url'; title: string; detail: string; text: string }[],
+  contextBlocks: { kind: 'contract' | 'contractstuk' | 'addendum' | 'url'; title: string; detail: string; text: string }[],
   orgId: string
 ): Promise<QaComplexity> {
   const totalChars = contextBlocks.reduce((sum, block) => sum + block.text.length, 0)
@@ -288,7 +288,7 @@ async function determineQuestionComplexity(
       acc[block.kind] += 1
       return acc
     },
-    { contract: 0, addendum: 0, url: 0 }
+    { contract: 0, contractstuk: 0, addendum: 0, url: 0 }
   )
 
   const heuristicComplexity = estimateQuestionComplexityHeuristically(question, contextBlocks.length)
@@ -305,7 +305,7 @@ Kies "complex" bij meerdere bronnen, interpretatie, tegenstrijdigheden, risico-i
 Kies "simple" bij feitelijke opzoekvragen met direct antwoord in 1-2 bronnen.`,
       user: `Organisatie: org_${orgId}
 Vraag: ${question}
-Bronnen: totaal=${contextBlocks.length}, contracts=${sourceKinds.contract}, addenda=${sourceKinds.addendum}, urls=${sourceKinds.url}, chars=${totalChars}
+Bronnen: totaal=${contextBlocks.length}, hoofdcontract=${sourceKinds.contract}, contractstukken=${sourceKinds.contractstuk}, addenda=${sourceKinds.addendum}, urls=${sourceKinds.url}, chars=${totalChars}
 Heuristische voorinschatting: ${heuristicComplexity}`,
     })
     return parsed.complexity === 'complex' ? 'complex' : 'simple'
@@ -316,7 +316,7 @@ Heuristische voorinschatting: ${heuristicComplexity}`,
 
 export async function answerContractQuestion(
   question: string,
-  contextBlocks: { kind: 'contract' | 'addendum' | 'url'; title: string; detail: string; text: string }[],
+  contextBlocks: { kind: 'contract' | 'contractstuk' | 'addendum' | 'url'; title: string; detail: string; text: string }[],
   orgId: string
 ): Promise<ContractQuestionAnswer> {
   const complexity = await determineQuestionComplexity(question, contextBlocks, orgId)
@@ -325,6 +325,7 @@ export async function answerContractQuestion(
   const parts = contextBlocks.map((b, i) => {
     let label: string
     if (b.kind === 'contract') label = `Hoofdcontract: ${b.title} (${b.detail})`
+    else if (b.kind === 'contractstuk') label = `Extra contractstuk: ${b.title} (${b.detail})`
     else if (b.kind === 'addendum') label = `Addendum / wijziging: ${b.title} (${b.detail})`
     else label = `Externe bron: ${b.title}`
     return `--- bron ${i + 1}: ${label} ---\n${b.text}`
@@ -336,7 +337,7 @@ export async function answerContractQuestion(
     system: `Je bent een senior contractjurist en adviseur. Beantwoord de vraag van de gebruiker uitsluitend op basis van de meegeleverde bronnen.
 Regels:
 - Antwoord in het Nederlands, helder en gestructureerd (kopjes waar nuttig).
-- **Addenda en wijzigingen gaan voor op het hoofdcontract** waar ze van elkaar verschillen. Bronnen staan in volgorde: eerst het hoofdcontract, daarna addenda van oud naar nieuw — **het laatst genoemde addendum wint bij tegenstrijdigheid met eerdere addenda of met het hoofdcontract**.
+- **Volgorde en voorrang:** eerst hoofdcontract(en), dan **extra contractstukken** (bijlagen zonder wijzigingskarakter), daarna **addenda**. Addenda gaan voor op hoofdcontract en extra contractstukken waar ze afwijken. Tussen addenda wint **het laatst in deze lijst genoemde addendum** (nieuwste) bij tegenstrijdigheid met oudere addenda.
 - Citeer concreet: verwijs naar welke bron (contracttitel, bestandsnaam addendum, of URL-host) en parafraseer of kort citeer waar relevant.
 - Als de bronnen de vraag niet volledig beantwoorden, zeg dat expliciet en wat er wél in de bronnen staat.
 - Geen aannames over feiten die niet in de tekst staan.
@@ -345,7 +346,7 @@ Regels:
   "answer": string (Markdown toegestaan),
   "sources": [
     {
-      "type": "contract"|"addendum"|"url",
+      "type": "contract"|"contractstuk"|"addendum"|"url",
       "title": string,
       "detail": string (bestandsnaam of URL),
       "relevance": string (kort: waarom deze bron bij de vraag hoort)

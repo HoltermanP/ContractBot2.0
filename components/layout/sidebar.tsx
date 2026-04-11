@@ -98,6 +98,7 @@ export function Sidebar({ moduleVisibility }: { moduleVisibility: OrgModuleVisib
           <Link
             key={href}
             href={href}
+            prefetch={href === '/dashboard' ? false : undefined}
             className={cn(
               'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
               pathname === href || (href !== '/dashboard' && pathname.startsWith(href))

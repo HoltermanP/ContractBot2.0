@@ -16,21 +16,27 @@ export async function loadContractCorpusParts(contractId: string) {
     orderBy: [asc(contractDocuments.uploadedAt)],
   })
   const mainDocuments = current.filter((d) => d.documentKind === 'hoofdcontract')
+  const contractstukken = current.filter((d) => d.documentKind === 'contractstuk')
   const addenda = current.filter((d) => d.documentKind === 'addendum')
-  return { mainDocuments, addenda }
+  return { mainDocuments, contractstukken, addenda }
 }
 
-/** Volledige tekst voor risico-/compliance-analyse: hoofdcontract eerst, daarna addenda (oud → nieuw). */
+/** Volledige tekst voor risico-/compliance-analyse: hoofdcontract → extra contractstukken → addenda (oud → nieuw; nieuwste addendum wint). */
 export async function loadContractCorpusPlainTextForAnalysis(contractId: string): Promise<string> {
-  const { mainDocuments, addenda } = await loadContractCorpusParts(contractId)
+  const { mainDocuments, contractstukken, addenda } = await loadContractCorpusParts(contractId)
   const parts: string[] = []
   const sortedAddenda = [...addenda].sort(
-    (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
+    (a, b) => new Date(a.uploadedAt).getTime() - new Date(b.uploadedAt).getTime()
   )
 
   for (const m of mainDocuments) {
     const text = await parseDocumentFromStoredFile(m)
     parts.push(`=== HOOFDCONTRACT (${m.filename}) ===\n${text}`)
+  }
+
+  for (const s of contractstukken) {
+    const text = await parseDocumentFromStoredFile(s)
+    parts.push(`=== EXTRA CONTRACTSTUK (${s.filename}) ===\n${text}`)
   }
 
   for (const a of sortedAddenda) {
@@ -39,8 +45,8 @@ export async function loadContractCorpusPlainTextForAnalysis(contractId: string)
   }
   if (parts.length === 0) return ''
   return (
-    'Let op: addenda en wijzigingen hebben voorrang op het hoofdcontract waar zij daarvan afwijken; ' +
-      'nieuwere addenda gaan voor op oudere addenda.\n\n' +
+    'Let op: addenda hebben voorrang op hoofdcontract en extra contractstukken waar zij daarvan afwijken; ' +
+      'tussen addenda wint het laatst toegevoegde (nieuwste) bij tegenstrijdigheid.\n\n' +
     parts.join('\n\n')
   )
 }
@@ -50,7 +56,7 @@ export async function loadContractCorpusPlainTextForAnalysis(contractId: string)
  * in de eerste ~8000 tekens van het embedding-model.
  */
 export async function loadContractCorpusPlainTextForEmbedding(contractId: string): Promise<string> {
-  const { mainDocuments, addenda } = await loadContractCorpusParts(contractId)
+  const { mainDocuments, contractstukken, addenda } = await loadContractCorpusParts(contractId)
   const parts: string[] = []
   const sortedAddenda = [...addenda].sort(
     (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
@@ -59,6 +65,11 @@ export async function loadContractCorpusPlainTextForEmbedding(contractId: string
   for (const a of sortedAddenda) {
     const text = await parseDocumentFromStoredFile(a)
     parts.push(`Addendum (${a.filename}):\n${text}`)
+  }
+
+  for (const s of contractstukken) {
+    const text = await parseDocumentFromStoredFile(s)
+    parts.push(`Extra contractstuk (${s.filename}):\n${text}`)
   }
 
   for (const m of mainDocuments) {

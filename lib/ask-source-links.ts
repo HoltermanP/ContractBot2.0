@@ -36,9 +36,9 @@ function isHttpUrl(s: string) {
 /**
  * Koppelt AI-bronregels aan de geladen contextblokken en bouwt klikbare hrefs.
  */
-function normalizeSourceType(t: string): 'contract' | 'addendum' | 'url' {
+function normalizeSourceType(t: string): 'contract' | 'contractstuk' | 'addendum' | 'url' {
   const x = t.trim().toLowerCase()
-  if (x === 'addendum' || x === 'url' || x === 'contract') return x
+  if (x === 'addendum' || x === 'url' || x === 'contract' || x === 'contractstuk') return x
   return 'contract'
 }
 
@@ -46,7 +46,9 @@ export function enrichAskSources(
   sources: QaSourceRef[],
   blocks: QaContextBlock[]
 ): AskSourceWithLink[] {
-  const contractBlocks = blocks.filter((b) => b.kind === 'contract' || b.kind === 'addendum')
+  const contractBlocks = blocks.filter(
+    (b) => b.kind === 'contract' || b.kind === 'contractstuk' || b.kind === 'addendum'
+  )
   const urlBlocks = blocks.filter((b) => b.kind === 'url')
 
   return sources.map((source) => {
@@ -65,7 +67,8 @@ export function enrichAskSources(
       return base
     }
 
-    const wantKind = sourceKind === 'addendum' ? 'addendum' : 'contract'
+    const wantKind =
+      sourceKind === 'addendum' ? 'addendum' : sourceKind === 'contractstuk' ? 'contractstuk' : 'contract'
     let candidates = contractBlocks.filter((b) => b.kind === wantKind)
 
     const exactAnyKind = contractBlocks.find(

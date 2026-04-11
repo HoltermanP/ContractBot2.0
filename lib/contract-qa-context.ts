@@ -5,7 +5,7 @@ import { getEmbedding } from '@/lib/openai'
 import { parseDocumentFromStoredFile, loadContractCorpusParts } from '@/lib/contract-corpus'
 
 export type QaContextBlock = {
-  kind: 'contract' | 'addendum' | 'url'
+  kind: 'contract' | 'contractstuk' | 'addendum' | 'url'
   /** Contract-id (niet document-id) */
   id: string
   /** Rij-id in contract_documents; alleen voor contract/addendum */
@@ -17,6 +17,7 @@ export type QaContextBlock = {
 }
 
 const MAX_CHARS_MAIN = 14_000
+const MAX_CHARS_PER_CONTRACTSTUK = 12_000
 const MAX_CHARS_PER_ADDENDUM = 8_000
 
 export async function loadContractTextBlocks(
@@ -32,15 +33,18 @@ export async function loadContractTextBlocks(
     if (!contract) continue
     if (options?.hideArchivedForReader && contract.status === 'gearchiveerd') continue
 
-    const { mainDocuments, addenda } = await loadContractCorpusParts(contractId)
-    if (mainDocuments.length === 0 && addenda.length === 0) continue
+    const { mainDocuments, contractstukken, addenda } = await loadContractCorpusParts(contractId)
+    if (mainDocuments.length === 0 && contractstukken.length === 0 && addenda.length === 0) continue
 
     try {
+      // Addenda: oud → nieuw in de lijst, zodat het laatste blok in de prompt het nieuwste addendum is (wint bij conflict).
       const sortedAddenda = [...addenda].sort(
-        (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
+        (a, b) => new Date(a.uploadedAt).getTime() - new Date(b.uploadedAt).getTime()
+      )
+      const sortedStukken = [...contractstukken].sort(
+        (a, b) => new Date(a.uploadedAt).getTime() - new Date(b.uploadedAt).getTime()
       )
 
-      // Eerst hoofdcontractdocumenten, daarna addenda (nieuw → oud) zodat wijzigingen prioriteit krijgen.
       for (const main of mainDocuments) {
         const text = await parseDocumentFromStoredFile(main)
         blocks.push({
@@ -51,6 +55,19 @@ export async function loadContractTextBlocks(
           title: contract.title,
           detail: main.filename,
           text: text.slice(0, MAX_CHARS_MAIN),
+        })
+      }
+
+      for (const st of sortedStukken) {
+        const text = await parseDocumentFromStoredFile(st)
+        blocks.push({
+          kind: 'contractstuk',
+          id: contract.id,
+          documentId: st.id,
+          fileType: st.fileType ?? null,
+          title: contract.title,
+          detail: st.filename,
+          text: text.slice(0, MAX_CHARS_PER_CONTRACTSTUK),
         })
       }
 

@@ -426,7 +426,7 @@ async function seed() {
   const docSpecsPerContract: Array<{
     suffix: string
     seedDocKind: 'main' | 'annex' | 'order'
-    documentKind: 'hoofdcontract' | 'addendum'
+    documentKind: 'hoofdcontract' | 'contractstuk' | 'addendum'
     versionNumber: number
   }> = [
     { suffix: 'hoofdovereenkomst.pdf', seedDocKind: 'main', documentKind: 'hoofdcontract', versionNumber: 1 },

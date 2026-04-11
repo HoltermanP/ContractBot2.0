@@ -29,7 +29,7 @@ export const workflowTypeEnum = pgEnum('workflow_type', ['new_contract', 'change
 export const workflowStatusEnum = pgEnum('workflow_status', ['pending', 'approved', 'rejected'])
 export const customFieldTypeEnum = pgEnum('custom_field_type', ['text', 'number', 'date', 'select'])
 export const trainingCourseStatusEnum = pgEnum('training_course_status', ['draft', 'published'])
-export const documentKindEnum = pgEnum('document_kind', ['hoofdcontract', 'addendum'])
+export const documentKindEnum = pgEnum('document_kind', ['hoofdcontract', 'contractstuk', 'addendum'])
 
 // Organizations
 export const organizations = pgTable('organizations', {

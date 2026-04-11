@@ -18,7 +18,7 @@ import {
 export function ContractDocuments({ contract, user }: { contract: any; user: any }) {
   const router = useRouter()
   const [uploading, setUploading] = useState(false)
-  const [uploadKind, setUploadKind] = useState<'hoofdcontract' | 'addendum'>('hoofdcontract')
+  const [uploadKind, setUploadKind] = useState<'hoofdcontract' | 'contractstuk' | 'addendum'>('hoofdcontract')
   const fileRef = useRef<HTMLInputElement>(null)
   const MAX_UPLOAD_SIZE_BYTES = 4 * 1024 * 1024
 
@@ -89,7 +89,8 @@ export function ContractDocuments({ contract, user }: { contract: any; user: any
   }
 
   const currentAll = contract.documents?.filter((d: any) => d.isCurrent) ?? []
-  const currentMain = currentAll.filter((d: any) => d.documentKind !== 'addendum')
+  const currentHoofd = currentAll.filter((d: any) => d.documentKind === 'hoofdcontract')
+  const currentStukken = currentAll.filter((d: any) => d.documentKind === 'contractstuk')
   const currentAddenda = currentAll.filter((d: any) => d.documentKind === 'addendum')
   const olderDocs = contract.documents?.filter((d: any) => !d.isCurrent) ?? []
 
@@ -106,13 +107,23 @@ export function ContractDocuments({ contract, user }: { contract: any; user: any
                 <Label htmlFor="doc-kind" className="text-xs text-muted-foreground">
                   Documenttype
                 </Label>
-                <Select value={uploadKind} onValueChange={(v) => setUploadKind(v as 'hoofdcontract' | 'addendum')}>
+                <Select
+                  value={uploadKind}
+                  onValueChange={(v) => setUploadKind(v as 'hoofdcontract' | 'contractstuk' | 'addendum')}
+                >
                   <SelectTrigger id="doc-kind">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="hoofdcontract">Hoofdcontractdocument (toevoegen onder contract)</SelectItem>
-                    <SelectItem value="addendum">Addendum / wijziging (aanvullend; heeft voorrang bij vragen)</SelectItem>
+                    <SelectItem value="hoofdcontract">
+                      Hoofdcontract (hoofddocument; nieuwe upload vervangt het vorige hoofdcontract)
+                    </SelectItem>
+                    <SelectItem value="contractstuk">
+                      Extra contractstuk (bijlage; blijft naast andere stukken staan)
+                    </SelectItem>
+                    <SelectItem value="addendum">
+                      Addendum / wijziging (gaat voor op hoofdcontract en andere stukken bij tegenstrijdigheid)
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -153,13 +164,39 @@ export function ContractDocuments({ contract, user }: { contract: any; user: any
             <p className="text-sm text-muted-foreground">Nog geen documenten geüpload</p>
           ) : (
             <>
-              {currentMain.length > 0 && (
+              {currentHoofd.length > 0 && (
                 <div className="space-y-2">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Hoofdcontract</p>
-                  {currentMain.map((doc: any) => (
+                  {currentHoofd.map((doc: any) => (
                     <div key={doc.id} className="flex items-center justify-between p-3 rounded-lg border bg-white">
                       <div className="flex items-center gap-3">
                         <FileText className="h-5 w-5 text-blue-500 shrink-0" />
+                        <div>
+                          <div className="font-medium text-sm">{doc.filename}</div>
+                          <div className="text-xs text-muted-foreground">
+                            v{doc.versionNumber} · {(doc.fileSize / 1024).toFixed(0)} KB · {formatDate(doc.uploadedAt)}
+                            {doc.aiProcessed && <Badge variant="success" className="ml-2">AI verwerkt</Badge>}
+                          </div>
+                        </div>
+                      </div>
+                      <Button asChild variant="ghost" size="sm">
+                        <a href={`/api/contract-documents/${doc.id}/download`}>
+                          <Download className="h-4 w-4" />
+                        </a>
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {currentStukken.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Extra contractstukken
+                  </p>
+                  {currentStukken.map((doc: any) => (
+                    <div key={doc.id} className="flex items-center justify-between p-3 rounded-lg border bg-slate-50/80">
+                      <div className="flex items-center gap-3">
+                        <FileStack className="h-5 w-5 text-slate-600 shrink-0" />
                         <div>
                           <div className="font-medium text-sm">{doc.filename}</div>
                           <div className="text-xs text-muted-foreground">

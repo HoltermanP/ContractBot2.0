@@ -1,7 +1,8 @@
+import { connection } from 'next/server'
 import { getOrCreateUser } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { contracts, contractObligations, approvalWorkflows, dashboardNotifications } from '@/lib/db/schema'
-import { eq, and, lt, gte, count, sql } from 'drizzle-orm'
+import { eq, and, lt, count } from 'drizzle-orm'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { formatDate, formatCurrency, daysUntil, getExpiryBadgeClass } from '@/lib/utils'
@@ -9,7 +10,12 @@ import { FileText, AlertTriangle, CheckCircle, Clock, TrendingUp, Bot, Lightbulb
 import Link from 'next/link'
 import { DashboardChart } from './dashboard-chart'
 
+/** Altijd verse serverdata; geen statische of gedeeltelijke cache van dit segment. */
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 export default async function DashboardPage() {
+  await connection()
   const user = await getOrCreateUser()
   if (!user) return null
 
@@ -32,10 +38,16 @@ export default async function DashboardPage() {
       .where(and(eq(contracts.orgId, user.orgId), eq(contracts.status, 'actief'), lt(contracts.endDate, in30Days))),
     db.select({ count: count() }).from(contracts)
       .where(and(eq(contracts.orgId, user.orgId), eq(contracts.status, 'actief'), lt(contracts.endDate, in90Days))),
-    db.select({ count: count() }).from(contractObligations)
-      .where(eq(contractObligations.status, 'open')),
-    db.select({ count: count() }).from(approvalWorkflows)
-      .where(eq(approvalWorkflows.status, 'pending')),
+    db
+      .select({ count: count() })
+      .from(contractObligations)
+      .innerJoin(contracts, eq(contracts.id, contractObligations.contractId))
+      .where(and(eq(contracts.orgId, user.orgId), eq(contractObligations.status, 'open'))),
+    db
+      .select({ count: count() })
+      .from(approvalWorkflows)
+      .innerJoin(contracts, eq(contracts.id, approvalWorkflows.contractId))
+      .where(and(eq(contracts.orgId, user.orgId), eq(approvalWorkflows.status, 'pending'))),
     db.query.contracts.findMany({
       where: eq(contracts.orgId, user.orgId),
       orderBy: (c, { desc }) => [desc(c.updatedAt)],
