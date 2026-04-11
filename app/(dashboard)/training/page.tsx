@@ -1,7 +1,7 @@
 import { getOrCreateUser } from '@/lib/auth'
 import { db, trainingCourses } from '@/lib/db'
-import { and, desc, eq } from 'drizzle-orm'
-import { canMutateContractData } from '@/lib/permissions'
+import { desc, eq } from 'drizzle-orm'
+import { canAccessTrainingModule } from '@/lib/permissions'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -12,9 +12,7 @@ export default async function TrainingListPage() {
   const user = await getOrCreateUser()
   if (!user) return null
 
-  const whereClause = canMutateContractData(user.role)
-    ? eq(trainingCourses.orgId, user.orgId)
-    : and(eq(trainingCourses.orgId, user.orgId), eq(trainingCourses.status, 'published'))
+  const whereClause = eq(trainingCourses.orgId, user.orgId)
 
   const rows = await db.query.trainingCourses.findMany({
     where: whereClause,
@@ -36,7 +34,7 @@ export default async function TrainingListPage() {
             Genereer uitgebreide trainingen op basis van contracten en documenten, en optioneel een Gamma-presentatie.
           </p>
         </div>
-        {canMutateContractData(user.role) && (
+        {canAccessTrainingModule(user.role) && (
           <Button asChild>
             <Link href="/training/new">
               <Plus className="h-4 w-4 mr-2" />
@@ -51,12 +49,10 @@ export default async function TrainingListPage() {
           <CardHeader>
             <CardTitle>Nog geen trainingen</CardTitle>
             <CardDescription>
-              {canMutateContractData(user.role)
-                ? 'Maak een training aan en koppel contracten of specifieke documenten (addenda).'
-                : 'Er zijn nog geen gepubliceerde trainingen beschikbaar.'}
+              Maak een training aan en koppel contracten of specifieke documenten (addenda).
             </CardDescription>
           </CardHeader>
-          {canMutateContractData(user.role) && (
+          {canAccessTrainingModule(user.role) && (
             <CardContent>
               <Button asChild variant="outline">
                 <Link href="/training/new">Start met een nieuwe training</Link>

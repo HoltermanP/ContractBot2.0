@@ -8,7 +8,7 @@ import {
   trainingCourseDocuments,
 } from '@/lib/db'
 import { eq, and } from 'drizzle-orm'
-import { canMutateContractData } from '@/lib/permissions'
+import { canAccessTrainingModule } from '@/lib/permissions'
 import { resolveTrainingSources, trimSourcesForModel } from '@/lib/training-sources'
 import { generateExtendedContractTraining } from '@/lib/training-ai'
 import { logAudit } from '@/lib/audit'
@@ -18,7 +18,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     const { id: courseId } = await params
     const user = await getOrCreateUser()
     if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
-    if (!canMutateContractData(user.role)) {
+    if (!canAccessTrainingModule(user.role)) {
       return NextResponse.json({ error: 'Geen rechten' }, { status: 403 })
     }
 

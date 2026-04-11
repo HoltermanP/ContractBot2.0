@@ -4,9 +4,20 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Loader2, Bot, Link2, Copy, Check, FolderOpen, Building2, FileText } from 'lucide-react'
+import {
+  Loader2,
+  Bot,
+  Link2,
+  Copy,
+  Check,
+  FolderOpen,
+  Building2,
+  FileText,
+  Send,
+  MessageSquare,
+} from 'lucide-react'
+import { cn } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
@@ -236,6 +247,14 @@ export default function ContractAskPage() {
     }
   }, [contractIdFromUrl, projectIdFromUrl, contracts, projects])
 
+  /** Zorg dat project-modus niet op een lege projectkeuze blijft hangen (dan blijft Verstuur uitgeschakeld). */
+  useEffect(() => {
+    if (scopeMode !== 'project') return
+    if (selectedScopeProjectId) return
+    if (projects.length === 0) return
+    setSelectedScopeProjectId(projects[0].id)
+  }, [scopeMode, selectedScopeProjectId, projects])
+
   function scrollChatToBottom() {
     const el = chatScrollRef.current
     if (!el) return
@@ -376,8 +395,16 @@ export default function ContractAskPage() {
 
   function handleQuestionKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
+    if (
+      loading ||
+      !question.trim() ||
+      (scopeMode === 'single' && !selectedContractId) ||
+      (scopeMode === 'project' && !selectedScopeProjectId)
+    ) {
+      return
+    }
     e.preventDefault()
-    e.currentTarget.form?.requestSubmit()
+    void submitQuestion(question)
   }
 
   function sanitizeAssistantHtml(html: string) {
@@ -415,7 +442,7 @@ export default function ContractAskPage() {
   }
 
   const assistantContentClassName =
-    'prose prose-slate prose-sm max-w-none leading-7 prose-headings:scroll-m-20 prose-headings:font-semibold prose-headings:tracking-tight prose-h1:mt-1 prose-h1:mb-3 prose-h1:text-xl prose-h2:mt-6 prose-h2:mb-2 prose-h2:text-lg prose-h3:mt-5 prose-h3:mb-2 prose-h3:text-base prose-p:my-3 prose-strong:text-slate-900 prose-ul:my-3 prose-ol:my-3 prose-li:my-1 prose-blockquote:my-4 prose-blockquote:border-l-4 prose-blockquote:border-blue-200 prose-blockquote:bg-blue-50/60 prose-blockquote:py-2 prose-blockquote:px-3 prose-blockquote:italic prose-code:rounded prose-code:bg-slate-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-pre:my-4 prose-pre:rounded-lg prose-pre:border prose-pre:border-slate-200 prose-pre:bg-slate-900 prose-pre:text-slate-100 prose-a:font-medium prose-a:text-blue-700 prose-a:underline-offset-4 hover:prose-a:underline prose-table:my-4 prose-table:w-full prose-th:border prose-th:border-slate-200 prose-th:bg-slate-100 prose-th:px-2 prose-th:py-1.5 prose-th:text-left prose-th:text-xs prose-th:font-semibold prose-td:border prose-td:border-slate-200 prose-td:px-2 prose-td:py-1.5'
+    'prose prose-zinc prose-sm max-w-none leading-7 text-[15px] prose-headings:scroll-m-20 prose-headings:font-semibold prose-headings:tracking-tight prose-headings:text-zinc-900 prose-h1:mt-1 prose-h1:mb-3 prose-h1:text-xl prose-h2:mt-6 prose-h2:mb-2 prose-h2:text-lg prose-h3:mt-5 prose-h3:mb-2 prose-h3:text-base prose-p:my-3 prose-p:text-zinc-800 prose-strong:text-zinc-900 prose-ul:my-3 prose-ol:my-3 prose-li:my-1 prose-blockquote:my-4 prose-blockquote:border-l-[3px] prose-blockquote:border-zinc-300 prose-blockquote:bg-zinc-100/80 prose-blockquote:py-2 prose-blockquote:px-3 prose-blockquote:italic prose-code:rounded-md prose-code:bg-zinc-100 prose-code:px-1.5 prose-code:py-0.5 prose-code:text-[0.85em] prose-pre:my-4 prose-pre:rounded-xl prose-pre:border prose-pre:border-zinc-200 prose-pre:bg-zinc-950 prose-pre:text-zinc-100 prose-a:font-medium prose-a:text-zinc-800 prose-a:underline-offset-4 hover:prose-a:underline prose-table:my-4 prose-table:w-full prose-th:border prose-th:border-zinc-200 prose-th:bg-zinc-100 prose-th:px-2 prose-th:py-1.5 prose-th:text-left prose-th:text-xs prose-th:font-semibold prose-td:border prose-td:border-zinc-200 prose-td:px-2 prose-td:py-1.5'
 
   async function handleCopyMessage(message: ChatMessage) {
     try {
@@ -427,244 +454,364 @@ export default function ContractAskPage() {
     }
   }
 
+  const canSubmit =
+    !loading &&
+    question.trim().length > 0 &&
+    (scopeMode !== 'single' || Boolean(selectedContractId)) &&
+    (scopeMode !== 'project' || Boolean(selectedScopeProjectId))
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-          <Bot className="h-7 w-7 text-blue-600" />
-          Contractagent
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          Stel een vraag over uw contracten. Het antwoord wordt onderbouwd met de contractdocumenten en optioneel met
-          door u opgegeven webpagina&apos;s (URL&apos;s).
-        </p>
-      </div>
+    <div className="mx-auto w-full max-w-[1400px] pb-6">
+      {/* Compacte kop — vergelijkbaar met een chat-product */}
+      <header className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-zinc-900 sm:text-2xl">Contractagent</h1>
+          <p className="mt-0.5 max-w-xl text-sm text-zinc-500">
+            Vragen over uw contracten, met bronnen uit documenten en optioneel uit eigen URL&apos;s.
+          </p>
+        </div>
+        <div className="mt-2 flex items-center gap-2 text-xs text-zinc-400 sm:mt-0">
+          <MessageSquare className="h-3.5 w-3.5" aria-hidden />
+          <span className="hidden sm:inline">Eén doorlopend gesprek</span>
+          <span className="sm:hidden">Gesprek rechts</span>
+        </div>
+      </header>
 
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
-        <Card className="border-slate-200 bg-white">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Aan de slag in drie stappen</CardTitle>
-            <CardDescription>
-              Project → contract met documenten → hier uw vraag stellen. Zo blijft alles per bedrijf en dossier overzichtelijk.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="text-sm text-muted-foreground space-y-2 pb-4">
-            <p className="flex gap-2">
-              <span className="font-semibold text-slate-700 shrink-0">1.</span>
-              Maak een project aan onder Projecten (bijv. per leverancier of dossier); het standaardproject &quot;Algemeen&quot;
-              bestaat al.
-            </p>
-            <p className="flex gap-2">
-              <span className="font-semibold text-slate-700 shrink-0">2.</span>
-              Voeg contracten toe met PDF- of DOCX-documenten zodat de agent de tekst kan gebruiken.
-            </p>
-            <p className="flex gap-2">
-              <span className="font-semibold text-slate-700 shrink-0">3.</span>
-              Kies hieronder het zoekbereik en stel uw vraag; bronnen en beperkingen staan bij elk antwoord.
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="border-blue-100 bg-blue-50/40">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Zoekbereik</CardTitle>
-            <CardDescription>
-              Hele organisatie, één project, of één contract — de agent selecteert zelf relevante documenten binnen die
-              keuze (behalve bij één contract).
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start">
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="scope"
-                  checked={scopeMode === 'org'}
-                  onChange={() => setScopeMode('org')}
-                  disabled={loading}
-                />
-                <Building2 className="h-4 w-4 shrink-0 text-slate-600" />
-                Hele organisatie (slimme selectie)
-              </label>
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="scope"
-                  checked={scopeMode === 'project'}
-                  onChange={() => setScopeMode('project')}
-                  disabled={loading}
-                />
-                <FolderOpen className="h-4 w-4 shrink-0 text-amber-600" />
-                Dit project
-              </label>
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="scope"
-                  checked={scopeMode === 'single'}
-                  onChange={() => setScopeMode('single')}
-                  disabled={loading}
-                />
-                <FileText className="h-4 w-4 shrink-0 text-blue-600" />
-                Eén specifiek contract
-              </label>
-            </div>
-
-            {scopeMode === 'project' && (
-              <div className="space-y-2">
-                <Label htmlFor="scope-project-select">Project</Label>
-                <select
-                  id="scope-project-select"
-                  value={selectedScopeProjectId}
-                  onChange={(e) => setSelectedScopeProjectId(e.target.value)}
-                  disabled={loading || projects.length === 0}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                >
-                  <option value="">Selecteer een project</option>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-                {selectedScopeProject && (
-                  <p className="text-xs text-muted-foreground">
-                    Alleen contracten in <span className="font-medium text-slate-800">{selectedScopeProject.name}</span>{' '}
-                    worden automatisch meegenomen (max. enkele documenten per rondgang).
-                  </p>
-                )}
-              </div>
+      <div className="mt-6 flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-8">
+        {/* Linkerpaneel: zoekbereik + invoer — blijft zichtbaar bij scrollen (sticky) */}
+        <aside
+          className="w-full space-y-4 lg:sticky lg:top-4 lg:w-[min(100%,380px)] lg:shrink-0 lg:self-start xl:w-[400px] lg:max-h-[calc(100dvh-7rem)] lg:overflow-y-auto lg:pr-1"
+          aria-label="Zoekbereik en vraag"
+        >
+      {/* Zoekbereik: segment-knoppen i.p.v. losse kaart */}
+      <section
+        className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm"
+        aria-label="Zoekbereik"
+      >
+        <p className="mb-3 text-xs font-medium uppercase tracking-wider text-zinc-400">Zoekbereik</p>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => setScopeMode('org')}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors sm:text-sm',
+              scopeMode === 'org'
+                ? 'bg-zinc-900 text-white shadow-sm'
+                : 'bg-zinc-100/80 text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900'
             )}
-
-            {scopeMode === 'single' && (
-              <div className="space-y-3">
-                <div className="space-y-2">
-                  <Label htmlFor="contract-filter-project">Filter op project (optioneel)</Label>
-                  <select
-                    id="contract-filter-project"
-                    value={contractFilterProjectId}
-                    onChange={(e) => {
-                      setContractFilterProjectId(e.target.value)
-                      setSelectedContractId('')
-                    }}
-                    disabled={loading || projects.length === 0}
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  >
-                    <option value="">Alle projecten</option>
-                    {projects.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="contract-search">Zoek in titel of nummer</Label>
-                  <Input
-                    id="contract-search"
-                    placeholder="Typ om de lijst te filteren…"
-                    value={contractSearch}
-                    onChange={(e) => setContractSearch(e.target.value)}
-                    disabled={loading}
-                    className="text-sm"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="contract-select">Contract</Label>
-                  <select
-                    id="contract-select"
-                    value={selectedContractId}
-                    onChange={(e) => setSelectedContractId(e.target.value)}
-                    disabled={loading || contracts.length === 0}
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  >
-                    <option value="">Selecteer een contract</option>
-                    {contractOptions.map((contract) => (
-                      <option key={contract.id} value={contract.id}>
-                        {contract.projectName ? `[${contract.projectName}] ` : ''}
-                        {contract.title}
-                        {contract.contractNumber ? ` (#${contract.contractNumber})` : ''}
-                      </option>
-                    ))}
-                  </select>
-                  {selectedContract && (
-                    <div className="text-xs text-muted-foreground">
-                      <span>Geselecteerd: </span>
-                      <span className="font-medium text-slate-800">{selectedContract.title}</span>{' '}
-                      <Badge variant="outline" className="ml-1 text-[10px]">
-                        {selectedContract.status}
-                      </Badge>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="flex min-h-[min(70dvh,640px)] flex-col overflow-hidden">
-          <CardHeader className="shrink-0 border-b pb-4">
-            <CardTitle>Gesprek</CardTitle>
-            <CardDescription>
-              Je vragen en antwoorden staan hieronder in één doorlopend gesprek; typ onderaan om door te vragen.
-            </CardDescription>
-          </CardHeader>
-          {faqClusters.length > 0 ? (
-            <div className="shrink-0 space-y-2 border-b bg-slate-50/80 px-6 py-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Meestgestelde vragen
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Zelfde onderwerp wordt door AI gegroepeerd (ook bij andere woorden). Tik voor het laatst opgeslagen
-                antwoord — zonder nieuwe AI-rondgang.
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {faqClusters.map((c) => (
-                  <Button
-                    key={c.id}
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    disabled={loading}
-                    className="h-auto max-w-full justify-start whitespace-normal text-left text-xs sm:text-sm"
-                    onClick={() => handleFaqClusterClick(c.id)}
-                  >
-                    <span className="line-clamp-2">{c.label}</span>
-                    {c.askCount > 1 ? (
-                      <Badge variant="outline" className="ml-2 shrink-0 text-[10px]">
-                        ×{c.askCount}
-                      </Badge>
-                    ) : null}
-                  </Button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          <div
-            ref={chatScrollRef}
-            className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4"
           >
-            {error ? (
-              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</div>
-            ) : null}
-            {chatMessages.length === 0 && (
-              <div className="rounded-md border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
-                Typ hieronder je eerste vraag. Antwoorden, bronnen en vervolgsuggesties verschijnen hier in hetzelfde
-                venster.
-              </div>
+            <Building2 className="h-3.5 w-3.5 shrink-0 opacity-90" />
+            Organisatie
+          </button>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => setScopeMode('project')}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors sm:text-sm',
+              scopeMode === 'project'
+                ? 'bg-zinc-900 text-white shadow-sm'
+                : 'bg-zinc-100/80 text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900'
             )}
-            {chatMessages.map((message) => (
-              <div
-                key={message.id}
-                className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}
+          >
+            <FolderOpen className="h-3.5 w-3.5 shrink-0 opacity-90" />
+            Project
+          </button>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => setScopeMode('single')}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors sm:text-sm',
+              scopeMode === 'single'
+                ? 'bg-zinc-900 text-white shadow-sm'
+                : 'bg-zinc-100/80 text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900'
+            )}
+          >
+            <FileText className="h-3.5 w-3.5 shrink-0 opacity-90" />
+            Eén contract
+          </button>
+        </div>
+        <p className="mt-3 text-xs leading-relaxed text-zinc-500">
+          Bij organisatie of project kiest de agent zelf relevante documenten. Bij één contract wordt alleen dat dossier
+          gebruikt.
+        </p>
+
+        {scopeMode === 'project' && (
+          <div className="mt-4 space-y-2 border-t border-zinc-100 pt-4">
+            <Label htmlFor="scope-project-select" className="text-xs text-zinc-600">
+              Project
+            </Label>
+            <select
+              id="scope-project-select"
+              value={selectedScopeProjectId}
+              onChange={(e) => setSelectedScopeProjectId(e.target.value)}
+              disabled={loading || projects.length === 0}
+              className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-900 shadow-sm outline-none transition-colors focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+            >
+              <option value="">Selecteer een project</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            {selectedScopeProject && (
+              <p className="text-xs text-zinc-500">
+                Contracten in <span className="font-medium text-zinc-800">{selectedScopeProject.name}</span> (beperkt aantal
+                documenten per rondgang).
+              </p>
+            )}
+          </div>
+        )}
+
+        {scopeMode === 'single' && (
+          <div className="mt-4 space-y-3 border-t border-zinc-100 pt-4">
+            <div className="space-y-2">
+              <Label htmlFor="contract-filter-project" className="text-xs text-zinc-600">
+                Filter op project (optioneel)
+              </Label>
+              <select
+                id="contract-filter-project"
+                value={contractFilterProjectId}
+                onChange={(e) => {
+                  setContractFilterProjectId(e.target.value)
+                  setSelectedContractId('')
+                }}
+                disabled={loading || projects.length === 0}
+                className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm shadow-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
               >
-                <div
-                  className={
-                    message.role === 'user'
-                      ? 'max-w-[min(100%,32rem)] rounded-2xl bg-blue-600 px-4 py-3 text-sm text-white shadow-sm'
-                      : `max-w-[min(100%,40rem)] rounded-2xl border px-4 py-3 text-sm shadow-sm ${message.isError ? 'border-red-200 bg-red-50 text-red-800' : 'border-slate-200/80 bg-slate-50 text-slate-900'}`
-                  }
+                <option value="">Alle projecten</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="contract-search" className="text-xs text-zinc-600">
+                Zoek in titel of nummer
+              </Label>
+              <Input
+                id="contract-search"
+                placeholder="Filter…"
+                value={contractSearch}
+                onChange={(e) => setContractSearch(e.target.value)}
+                disabled={loading}
+                className="rounded-xl border-zinc-200 text-sm"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="contract-select" className="text-xs text-zinc-600">
+                Contract
+              </Label>
+              <select
+                id="contract-select"
+                value={selectedContractId}
+                onChange={(e) => setSelectedContractId(e.target.value)}
+                disabled={loading || contracts.length === 0}
+                className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm shadow-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+              >
+                <option value="">Selecteer een contract</option>
+                {contractOptions.map((contract) => (
+                  <option key={contract.id} value={contract.id}>
+                    {contract.projectName ? `[${contract.projectName}] ` : ''}
+                    {contract.title}
+                    {contract.contractNumber ? ` (#${contract.contractNumber})` : ''}
+                  </option>
+                ))}
+              </select>
+              {selectedContract && (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                  <span>
+                    Geselecteerd: <span className="font-medium text-zinc-800">{selectedContract.title}</span>
+                  </span>
+                  <Badge variant="secondary" className="text-[10px] font-normal">
+                    {selectedContract.status}
+                  </Badge>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <details className="group rounded-2xl border border-dashed border-zinc-200/90 bg-zinc-50/50 px-4 py-3 text-sm text-zinc-600 open:border-zinc-300 open:bg-white">
+        <summary className="cursor-pointer list-none font-medium text-zinc-700 outline-none marker:content-none [&::-webkit-details-marker]:hidden">
+          <span className="inline-flex items-center gap-2">
+            <span className="text-zinc-400 transition-transform group-open:rotate-90">▸</span>
+            Aan de slag (projecten &amp; documenten)
+          </span>
+        </summary>
+        <ol className="mt-3 list-decimal space-y-2 pl-5 text-xs leading-relaxed text-zinc-600 sm:text-sm">
+          <li>
+            Maak een project onder <Link href="/projects" className="font-medium text-zinc-800 underline-offset-2 hover:underline">Projecten</Link> (het project &quot;Algemeen&quot; bestaat al).
+          </li>
+          <li>
+            Voeg contracten toe met PDF- of DOCX-documenten zodat de agent de tekst kan gebruiken.
+          </li>
+          <li>Kies het zoekbereik hierboven; bronnen en beperkingen staan bij elk antwoord.</li>
+        </ol>
+      </details>
+
+          <form
+            onSubmit={handleSubmit}
+            className="space-y-3 rounded-2xl border border-zinc-200/90 bg-white p-4 shadow-[0_1px_0_rgba(0,0,0,0.04)] sm:p-5"
+          >
+            <p className="text-xs font-medium uppercase tracking-wider text-zinc-400">Uw vraag</p>
+            <details className="rounded-xl border border-zinc-100 bg-zinc-50/80 px-3 py-2 text-left">
+              <summary className="cursor-pointer select-none text-xs font-medium text-zinc-500 outline-none [&::-webkit-details-marker]:hidden">
+                <span className="inline-flex items-center gap-1.5">
+                  <Link2 className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
+                  Referentie-URL&apos;s (optioneel)
+                </span>
+              </summary>
+              <Label htmlFor="urls" className="sr-only">
+                Extra referentie-URL&apos;s
+              </Label>
+              <Textarea
+                id="urls"
+                placeholder={'Eén URL per regel\nhttps://…'}
+                value={referenceUrls}
+                onChange={(e) => setReferenceUrls(e.target.value)}
+                className="mt-2 min-h-[56px] resize-y border-zinc-200 bg-white font-mono text-xs"
+                disabled={loading}
+              />
+            </details>
+
+            <div className="flex items-end gap-2 rounded-2xl border border-zinc-200/90 bg-white px-2 py-2 shadow-[0_2px_12px_rgba(0,0,0,0.04)] focus-within:border-zinc-300 focus-within:ring-2 focus-within:ring-zinc-200/80 sm:gap-3 sm:px-3 sm:py-2.5">
+              <Textarea
+                id="chat-input"
+                placeholder="Stel een vraag…"
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                onKeyDown={handleQuestionKeyDown}
+                rows={3}
+                disabled={loading}
+                className="max-h-[220px] min-h-[5.5rem] flex-1 resize-y border-0 bg-transparent px-1 py-2 text-[15px] leading-relaxed text-zinc-900 shadow-none placeholder:text-zinc-400 focus-visible:ring-0 focus-visible:ring-offset-0"
+              />
+              <Button
+                type="submit"
+                size="icon"
+                disabled={!canSubmit}
+                className="h-10 w-10 shrink-0 rounded-xl sm:h-11 sm:w-11"
+                aria-label={loading ? 'Bezig…' : 'Verstuur vraag'}
+              >
+                {loading ? (
+                  <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+                ) : (
+                  <Send className="h-5 w-5" aria-hidden />
+                )}
+              </Button>
+            </div>
+            <p className="text-center text-[11px] text-zinc-400">
+              Enter om te versturen · Shift+Enter voor nieuwe regel
+            </p>
+            {!loading &&
+            question.trim() &&
+            ((scopeMode === 'project' && !selectedScopeProjectId) ||
+              (scopeMode === 'single' && !selectedContractId)) ? (
+              <p className="text-center text-xs text-amber-800/90" role="status">
+                {scopeMode === 'project' && !selectedScopeProjectId ? (
+                  projects.length === 0 ? (
+                    <>
+                      Geen projecten beschikbaar. Maak eerst een project aan onder <Link href="/projects" className="underline">Projecten</Link>.
+                    </>
+                  ) : (
+                    <>Kies een project bij Zoekbereik hierboven.</>
+                  )
+                ) : scopeMode === 'single' && !selectedContractId ? (
+                  contracts.length === 0 ? (
+                    <>
+                      Geen contracten gevonden. Voeg een contract toe onder{' '}
+                      <Link href="/contracts" className="underline">Contracten</Link>.
+                    </>
+                  ) : (
+                    <>Kies een contract bij Zoekbereik (modus &quot;Eén contract&quot;).</>
+                  )
+                ) : null}
+              </p>
+            ) : null}
+          </form>
+        </aside>
+
+        {/* Rechterkolom: alleen gesprek */}
+        <div className="flex min-h-[min(72dvh,720px)] min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-zinc-50/90 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
+        {faqClusters.length > 0 ? (
+          <div className="shrink-0 space-y-2 border-b border-zinc-200/80 bg-white/60 px-4 py-3 sm:px-5">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">Vaak gevraagd</p>
+            <p className="text-xs text-zinc-500">
+              Tik voor een eerder opgeslagen antwoord (zonder nieuwe AI-rondgang).
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {faqClusters.map((c) => (
+                <Button
+                  key={c.id}
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={loading}
+                  className="h-auto max-w-full rounded-full border-0 bg-zinc-100/90 px-3 py-1.5 text-left text-xs font-normal text-zinc-800 hover:bg-zinc-200/90 sm:text-sm"
+                  onClick={() => handleFaqClusterClick(c.id)}
                 >
+                  <span className="line-clamp-2">{c.label}</span>
+                  {c.askCount > 1 ? (
+                    <Badge variant="outline" className="ml-2 shrink-0 border-zinc-200 text-[10px] text-zinc-600">
+                      ×{c.askCount}
+                    </Badge>
+                  ) : null}
+                </Button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        <div
+          ref={chatScrollRef}
+          className="min-h-0 flex-1 space-y-6 overflow-y-auto overscroll-contain px-4 py-6 sm:px-6"
+        >
+          {error ? (
+            <div className="rounded-xl border border-red-200/80 bg-red-50/90 px-4 py-3 text-sm text-red-900">{error}</div>
+          ) : null}
+
+          {chatMessages.length === 0 && (
+            <div className="flex min-h-[180px] flex-col items-center justify-center gap-3 px-2 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-zinc-200/80">
+                <Bot className="h-6 w-6 text-zinc-500" aria-hidden />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-zinc-800">Waar kan ik u mee helpen?</p>
+                <p className="mt-1 max-w-sm text-sm leading-relaxed text-zinc-500">
+                  <span className="lg:hidden">Stel uw vraag in het veld hierboven. </span>
+                  <span className="hidden lg:inline">Stel uw vraag in het linkerpaneel. </span>
+                  Antwoorden bevatten bronvermelding en kunnen vervolgsuggesties tonen.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {chatMessages.map((message) => (
+            <div
+              key={message.id}
+              className={cn(
+                'flex w-full',
+                message.role === 'user' ? 'justify-end' : 'justify-start'
+              )}
+            >
+              <div
+                className={cn(
+                  message.role === 'user'
+                    ? 'max-w-[min(100%,85%)] rounded-[1.15rem] bg-zinc-200/90 px-4 py-2.5 text-[15px] leading-relaxed text-zinc-900 shadow-sm'
+                    : cn(
+                        'max-w-[min(100%,100%)] text-[15px] leading-relaxed text-zinc-900',
+                        message.isError
+                          ? 'rounded-[1.15rem] border border-red-200 bg-red-50/90 px-4 py-3 text-red-900'
+                          : 'rounded-[1.15rem] border border-zinc-200/60 bg-white px-4 py-3 shadow-sm'
+                      )
+                )}
+              >
                   {message.role === 'assistant' && !message.isError && message.response ? (
                     contentLooksLikeHtml(message.content) ? (
                       <div className={`${assistantContentClassName} [&_table]:overflow-hidden [&_table]:rounded-lg`} dangerouslySetInnerHTML={{ __html: sanitizeAssistantHtml(message.content) }} />
@@ -673,7 +820,7 @@ export default function ContractAskPage() {
                         <ReactMarkdown
                           components={{
                             table: ({ children }) => (
-                              <div className="my-4 overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                              <div className="my-4 overflow-x-auto rounded-lg border border-zinc-200 bg-white">
                                 <table className="w-full text-sm">{children}</table>
                               </div>
                             ),
@@ -701,10 +848,10 @@ export default function ContractAskPage() {
                     <div className="mt-3 flex justify-end">
                       <Button
                         type="button"
-                        variant="outline"
+                        variant="ghost"
                         size="sm"
                         onClick={() => handleCopyMessage(message)}
-                        className="h-8 gap-1.5"
+                        className="h-8 gap-1.5 rounded-full text-zinc-600 hover:text-zinc-900"
                       >
                         {copiedMessageId === message.id ? (
                           <>
@@ -756,7 +903,7 @@ export default function ContractAskPage() {
                                 variant="outline"
                                 size="sm"
                                 disabled={loading}
-                                className="h-auto whitespace-normal text-left"
+                                className="h-auto rounded-full border-zinc-200 bg-white whitespace-normal text-left font-normal text-zinc-800 hover:bg-zinc-50"
                                 onClick={() => handleFollowUpQuestionClick(suggestion)}
                               >
                                 {suggestion}
@@ -856,50 +1003,7 @@ export default function ContractAskPage() {
               </div>
             ))}
           </div>
-          <form
-            onSubmit={handleSubmit}
-            className="shrink-0 space-y-3 border-t bg-background px-4 py-4 sm:px-6"
-          >
-            <div className="space-y-2">
-              <Label htmlFor="urls" className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Link2 className="h-4 w-4" />
-                Extra referentie-URL&apos;s (optioneel)
-              </Label>
-              <Textarea
-                id="urls"
-                placeholder={'Eén URL per regel\nhttps://example.org/...'}
-                value={referenceUrls}
-                onChange={(e) => setReferenceUrls(e.target.value)}
-                className="min-h-[64px] font-mono text-sm"
-                disabled={loading}
-              />
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-              <Textarea
-                id="chat-input"
-                placeholder="Stel je vraag… (Enter om te versturen, Shift+Enter voor nieuwe regel)"
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                onKeyDown={handleQuestionKeyDown}
-                className="min-h-[100px] flex-1 resize-y text-base"
-                disabled={loading}
-              />
-              <Button
-                type="submit"
-                disabled={
-                  loading ||
-                  !question.trim() ||
-                  (scopeMode === 'single' && !selectedContractId) ||
-                  (scopeMode === 'project' && !selectedScopeProjectId)
-                }
-                className="w-full shrink-0 sm:w-auto sm:min-w-[120px]"
-              >
-                {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                Verstuur
-              </Button>
-            </div>
-          </form>
-        </Card>
+        </div>
       </div>
     </div>
   )

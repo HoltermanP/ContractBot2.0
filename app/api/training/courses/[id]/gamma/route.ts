@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getOrCreateUser } from '@/lib/auth'
 import { db, trainingCourses, trainingModules } from '@/lib/db'
 import { eq, and, asc } from 'drizzle-orm'
-import { canMutateContractData } from '@/lib/permissions'
+import { canAccessTrainingModule } from '@/lib/permissions'
 import { gammaCreateGeneration } from '@/lib/gamma'
 import { buildGammaInputFromCourse } from '@/lib/training-ai'
 import { logAudit } from '@/lib/audit'
@@ -12,7 +12,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { id: courseId } = await params
     const user = await getOrCreateUser()
     if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
-    if (!canMutateContractData(user.role)) {
+    if (!canAccessTrainingModule(user.role)) {
       return NextResponse.json({ error: 'Geen rechten' }, { status: 403 })
     }
 

@@ -59,6 +59,7 @@ export default async function DashboardPage() {
       icon: FileText,
       color: 'text-blue-600',
       bg: 'bg-blue-50',
+      href: '/contracts?status=actief',
     },
     {
       title: 'Verloopt binnen 30 dagen',
@@ -66,6 +67,7 @@ export default async function DashboardPage() {
       icon: AlertTriangle,
       color: 'text-red-600',
       bg: 'bg-red-50',
+      href: '/contracts?status=actief&expiring=30',
     },
     {
       title: 'Verloopt binnen 90 dagen',
@@ -73,6 +75,7 @@ export default async function DashboardPage() {
       icon: Clock,
       color: 'text-orange-600',
       bg: 'bg-orange-50',
+      href: '/contracts?status=actief&expiring=90',
     },
     {
       title: 'Open verplichtingen',
@@ -80,6 +83,7 @@ export default async function DashboardPage() {
       icon: CheckCircle,
       color: 'text-purple-600',
       bg: 'bg-purple-50',
+      href: '/contracts?focus=obligations',
     },
     {
       title: 'Openstaande goedkeuringen',
@@ -87,8 +91,9 @@ export default async function DashboardPage() {
       icon: TrendingUp,
       color: 'text-green-600',
       bg: 'bg-green-50',
+      href: '/contracts?focus=approvals',
     },
-  ]
+  ] as const
 
   return (
     <div className="space-y-8">
@@ -177,22 +182,30 @@ export default async function DashboardPage() {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-        {kpis.map(({ title, value, icon: Icon, color, bg }) => (
-          <Card key={title}>
-            <CardContent className="pt-5">
-              <div className="space-y-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className={`rounded-lg p-2 shrink-0 ${bg}`}>
-                  <Icon className={`h-5 w-5 ${color}`} />
+        {kpis.map(({ title, value, icon: Icon, color, bg, href }) => (
+          <Link
+            key={title}
+            href={href}
+            className="group block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          >
+            <Card className="h-full border-slate-200 transition-all hover:border-blue-300 hover:shadow-md cursor-pointer">
+              <CardContent className="pt-5">
+                <div className="space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className={`rounded-lg p-2 shrink-0 ${bg}`}>
+                      <Icon className={`h-5 w-5 ${color}`} />
+                    </div>
+                    <div className="text-right">
+                      <div className="text-2xl font-bold tabular-nums sm:text-3xl group-hover:text-blue-800 transition-colors">
+                        {value}
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <div className="text-2xl font-bold tabular-nums sm:text-3xl">{value}</div>
-                  </div>
+                  <div className="text-sm leading-snug text-muted-foreground group-hover:text-slate-700">{title}</div>
                 </div>
-                <div className="text-sm leading-snug text-muted-foreground">{title}</div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </Link>
         ))}
       </div>
 

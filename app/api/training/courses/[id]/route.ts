@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getOrCreateUser } from '@/lib/auth'
 import { db, trainingCourses, trainingModules, trainingCourseContracts, trainingCourseDocuments, trainingProgress } from '@/lib/db'
 import { eq, and, asc, inArray } from 'drizzle-orm'
-import { canMutateContractData, canViewTrainingCourse } from '@/lib/permissions'
+import { canAccessTrainingModule, canViewTrainingCourse } from '@/lib/permissions'
 import { logAudit } from '@/lib/audit'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -66,7 +66,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const { id } = await params
     const user = await getOrCreateUser()
     if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
-    if (!canMutateContractData(user.role)) {
+    if (!canAccessTrainingModule(user.role)) {
       return NextResponse.json({ error: 'Geen rechten' }, { status: 403 })
     }
 
@@ -109,7 +109,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     const { id } = await params
     const user = await getOrCreateUser()
     if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
-    if (!canMutateContractData(user.role)) {
+    if (!canAccessTrainingModule(user.role)) {
       return NextResponse.json({ error: 'Geen rechten' }, { status: 403 })
     }
 

@@ -2,13 +2,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getOrCreateUser } from '@/lib/auth'
 import { db, trainingCourses } from '@/lib/db'
 import { eq, desc } from 'drizzle-orm'
-import { canMutateContractData } from '@/lib/permissions'
+import { canAccessTrainingModule } from '@/lib/permissions'
 import { logAudit } from '@/lib/audit'
 
 export async function GET() {
   try {
     const user = await getOrCreateUser()
     if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
+    if (!canAccessTrainingModule(user.role)) {
+      return NextResponse.json({ error: 'Geen toegang' }, { status: 403 })
+    }
 
     const rows = await db.query.trainingCourses.findMany({
       where: eq(trainingCourses.orgId, user.orgId),
@@ -40,7 +43,7 @@ export async function POST(req: NextRequest) {
   try {
     const user = await getOrCreateUser()
     if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
-    if (!canMutateContractData(user.role)) {
+    if (!canAccessTrainingModule(user.role)) {
       return NextResponse.json({ error: 'Geen rechten om trainingen aan te maken' }, { status: 403 })
     }
 

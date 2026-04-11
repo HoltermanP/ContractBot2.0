@@ -69,8 +69,12 @@ export function canManageSupplierWrite(role: UserRole): boolean {
   return canMutateContractData(role)
 }
 
-/** Concept-trainingen alleen voor beheer; gepubliceerde cursussen voor iedereen in de org. */
-export function canViewTrainingCourse(role: UserRole, courseStatus: 'draft' | 'published'): boolean {
-  if (courseStatus === 'published') return true
-  return canMutateContractData(role)
+/** Training & e-learning: alleen voor org-admin (navigatie, API, cursussen). */
+export function canAccessTrainingModule(role: UserRole): boolean {
+  return role === 'admin'
+}
+
+/** Cursusdata ophalen (incl. concept): alleen admin. */
+export function canViewTrainingCourse(role: UserRole, _courseStatus: 'draft' | 'published'): boolean {
+  return canAccessTrainingModule(role)
 }

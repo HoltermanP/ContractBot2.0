@@ -1,5 +1,5 @@
 import { getOrCreateUser } from '@/lib/auth'
-import { db, contracts, projects } from '@/lib/db'
+import { approvalWorkflows, contractObligations, contracts, db, projects } from '@/lib/db'
 import { and, desc, eq, inArray, or } from 'drizzle-orm'
 import { canMutateContractData } from '@/lib/permissions'
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,10 @@ interface SearchParams {
   search?: string
   type?: string
   project?: string
+  /** Komt overeen met dashboard-KPI: actief en afloop vóór nu + N dagen */
+  expiring?: string
+  /** obligations = contracten met minstens één open verplichting; approvals = openstaande workflow */
+  focus?: string
 }
 
 export default async function ContractsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -59,7 +63,7 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
     orderBy: [desc(contracts.updatedAt)],
   })
 
-  const allContracts = baseRows
+  let allContracts = baseRows
     .filter((c) => !resolvedParams.status || resolvedParams.status === 'all' || c.status === resolvedParams.status)
     .filter((c) => !resolvedParams.type || resolvedParams.type === 'all' || c.contractType === resolvedParams.type)
     .filter((c) => {
@@ -79,6 +83,38 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
       endDate: c.endDate,
       projects: c.project ? [{ projectId: c.project.id, projectName: c.project.name }] : [],
     }))
+
+  const now = new Date()
+  const horizon30 = new Date(now.getTime() + 30 * 86400000)
+  const horizon90 = new Date(now.getTime() + 90 * 86400000)
+
+  if (resolvedParams.expiring === '30') {
+    allContracts = allContracts.filter(
+      (c) => c.status === 'actief' && c.endDate != null && new Date(c.endDate) < horizon30
+    )
+  } else if (resolvedParams.expiring === '90') {
+    allContracts = allContracts.filter(
+      (c) => c.status === 'actief' && c.endDate != null && new Date(c.endDate) < horizon90
+    )
+  }
+
+  if (resolvedParams.focus === 'obligations') {
+    const rows = await db
+      .select({ contractId: contractObligations.contractId })
+      .from(contractObligations)
+      .innerJoin(contracts, eq(contracts.id, contractObligations.contractId))
+      .where(and(eq(contracts.orgId, user.orgId), eq(contractObligations.status, 'open')))
+    const withOpen = new Set(rows.map((r) => r.contractId))
+    allContracts = allContracts.filter((c) => withOpen.has(c.id))
+  } else if (resolvedParams.focus === 'approvals') {
+    const rows = await db
+      .select({ contractId: approvalWorkflows.contractId })
+      .from(approvalWorkflows)
+      .innerJoin(contracts, eq(contracts.id, approvalWorkflows.contractId))
+      .where(and(eq(contracts.orgId, user.orgId), eq(approvalWorkflows.status, 'pending')))
+    const pending = new Set(rows.map((r) => r.contractId))
+    allContracts = allContracts.filter((c) => pending.has(c.id))
+  }
 
   return (
     <div className="space-y-6">

@@ -16,7 +16,14 @@ export function ContractsFilter({
 }: {
   suppliers: Supplier[]
   projects?: Project[]
-  currentParams: { status?: string; search?: string; type?: string; project?: string }
+  currentParams: {
+    status?: string
+    search?: string
+    type?: string
+    project?: string
+    expiring?: string
+    focus?: string
+  }
 }) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -84,7 +91,12 @@ export function ContractsFilter({
         </SelectContent>
       </Select>
 
-      {(currentParams.status || currentParams.search || currentParams.type || currentParams.project) && (
+      {(currentParams.status ||
+        currentParams.search ||
+        currentParams.type ||
+        currentParams.project ||
+        currentParams.expiring ||
+        currentParams.focus) && (
         <Button variant="ghost" size="sm" onClick={clearAll}>
           <X className="h-4 w-4 mr-1" />
           Filters wissen
