@@ -12,8 +12,11 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "npx tsx scripts/seed.ts",
+    "db:seed:baas": "npx tsx scripts/seed-baas-demo.ts",
+    "db:verify:baas": "npx tsx scripts/verify-baas-seed.ts",
     "blob:smoke": "npx tsx scripts/blob-smoke-test.ts",
-    "db:link-user": "npx tsx scripts/link-clerk-user-to-org.ts"
+    "db:link-user": "npx tsx scripts/link-clerk-user-to-org.ts",
+    "db:add-org-member": "npx tsx scripts/add-org-membership.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",

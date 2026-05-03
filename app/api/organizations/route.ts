@@ -5,6 +5,14 @@ import { users, projects } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { slugifyOrganizationSlug } from '@/lib/org'
 
+type OrgRow = {
+  orgId: string
+  role: string
+  name: string
+  slug: string
+  isActive: boolean
+}
+
 export async function GET() {
   try {
     const user = await getOrCreateUser()
@@ -15,15 +23,38 @@ export async function GET() {
       with: { organization: true },
     })
 
-    return NextResponse.json(
-      rows.map((r) => ({
+    const memberByOrgId = new Map(rows.map((r) => [r.orgId, r]))
+
+    let organizationsList: OrgRow[]
+
+    if (user.role === 'admin') {
+      const allOrgs = await db.query.organizations.findMany({
+        orderBy: (o, { asc }) => [asc(o.name)],
+      })
+      organizationsList = allOrgs.map((org) => {
+        const m = memberByOrgId.get(org.id)
+        return {
+          orgId: org.id,
+          role: m?.role ?? 'admin',
+          name: org.name,
+          slug: org.slug,
+          isActive: org.id === user.orgId,
+        }
+      })
+    } else {
+      organizationsList = rows.map((r) => ({
         orgId: r.orgId,
         role: r.role,
         name: r.organization?.name ?? '',
         slug: r.organization?.slug ?? '',
         isActive: r.orgId === user.orgId,
       }))
-    )
+    }
+
+    return NextResponse.json({
+      organizations: organizationsList,
+      isGlobalAdmin: user.role === 'admin',
+    })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Fout'
     return NextResponse.json({ error: message }, { status: 500 })

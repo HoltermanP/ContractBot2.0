@@ -7,6 +7,10 @@
  * Gebruik:
  *   npm run db:link-user -- user_2abc...
  *   npm run db:link-user -- user_2abc... universiteit-leiden admin
+ *   npm run db:link-user -- user_2abc... baas-bv-demo manager
+ *
+ * Alleen lid worden (actieve org ongewijzigd, handig voor de schakelaar met 2+ orgs):
+ *   npm run db:add-org-member -- user_2abc... baas-bv-demo manager
  *
  * Argumenten: <clerkUserId> [orgSlug] [rol]
  * - orgSlug: default `universiteit-leiden` (zoals in scripts/seed.ts)
@@ -14,6 +18,15 @@
  */
 import { loadEnvConfig } from '@next/env'
 loadEnvConfig(process.cwd())
+
+function normalizeDatabaseUrl(raw: string | undefined): string {
+  if (!raw) return ''
+  const t = raw.trim()
+  if ((t.startsWith("'") && t.endsWith("'")) || (t.startsWith('"') && t.endsWith('"'))) {
+    return t.slice(1, -1)
+  }
+  return t
+}
 
 import { neon } from '@neondatabase/serverless'
 import { drizzle } from 'drizzle-orm/neon-http'
@@ -44,12 +57,13 @@ async function main() {
     process.exit(1)
   }
 
-  if (!process.env.DATABASE_URL) {
+  const DATABASE_URL = normalizeDatabaseUrl(process.env.DATABASE_URL)
+  if (!DATABASE_URL) {
     console.error('DATABASE_URL ontbreekt in .env.local')
     process.exit(1)
   }
 
-  const sql = neon(process.env.DATABASE_URL)
+  const sql = neon(DATABASE_URL)
   const db = drizzle(sql, { schema })
 
   const org = await db.query.organizations.findFirst({

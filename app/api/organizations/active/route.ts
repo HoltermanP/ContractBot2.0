@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getOrCreateUser } from '@/lib/auth'
+import { ensureOrgMembership, getOrCreateUser } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { organizationMembers, users } from '@/lib/db/schema'
+import { organizationMembers, organizations, users } from '@/lib/db/schema'
 import { and, eq } from 'drizzle-orm'
 
 export async function POST(req: NextRequest) {
@@ -13,11 +13,27 @@ export async function POST(req: NextRequest) {
     const orgId = typeof body.orgId === 'string' ? body.orgId : ''
     if (!orgId) return NextResponse.json({ error: 'orgId ontbreekt' }, { status: 400 })
 
-    const membership = await db.query.organizationMembers.findFirst({
+    let membership = await db.query.organizationMembers.findFirst({
       where: and(eq(organizationMembers.userId, user.id), eq(organizationMembers.orgId, orgId)),
     })
+
     if (!membership) {
-      return NextResponse.json({ error: 'Geen lidmaatschap voor deze organisatie' }, { status: 403 })
+      if (user.role !== 'admin') {
+        return NextResponse.json({ error: 'Geen lidmaatschap voor deze organisatie' }, { status: 403 })
+      }
+      const org = await db.query.organizations.findFirst({
+        where: eq(organizations.id, orgId),
+      })
+      if (!org) {
+        return NextResponse.json({ error: 'Organisatie niet gevonden' }, { status: 404 })
+      }
+      await ensureOrgMembership(user.id, orgId, 'admin')
+      membership = await db.query.organizationMembers.findFirst({
+        where: and(eq(organizationMembers.userId, user.id), eq(organizationMembers.orgId, orgId)),
+      })
+      if (!membership) {
+        return NextResponse.json({ error: 'Lidmaatschap aanmaken mislukt' }, { status: 500 })
+      }
     }
 
     await db
