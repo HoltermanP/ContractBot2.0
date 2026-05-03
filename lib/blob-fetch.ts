@@ -34,6 +34,24 @@ function isHttpUrl(url: string): boolean {
   return /^https?:\/\//i.test(url.trim())
 }
 
+/** Ondersteunt `data:application/pdf;base64,...` voor demoseeds zonder Blob-URL. */
+function tryDataUrlToBuffer(url: string): Buffer | null {
+  const t = url.trim()
+  if (!/^data:/i.test(t)) return null
+  const comma = t.indexOf(',')
+  if (comma === -1) return null
+  const header = t.slice(5, comma).toLowerCase()
+  const payload = t.slice(comma + 1)
+  if (header.includes(';base64')) {
+    return Buffer.from(payload, 'base64')
+  }
+  try {
+    return Buffer.from(decodeURIComponent(payload), 'utf8')
+  } catch {
+    return null
+  }
+}
+
 /** Ongeldige of placeholder-scheme URL’s (niet te fetchen). */
 function needsPublicFallback(url: string): boolean {
   const u = url.trim()
@@ -65,6 +83,9 @@ async function fetchHttpToBuffer(href: string): Promise<Buffer> {
  */
 export async function downloadFileToBuffer(url: string): Promise<Buffer> {
   const trimmed = url.trim()
+
+  const fromData = tryDataUrlToBuffer(trimmed)
+  if (fromData) return fromData
 
   if (looksLikeVercelBlobUrl(trimmed)) {
     const token = process.env.BLOB_READ_WRITE_TOKEN?.trim()

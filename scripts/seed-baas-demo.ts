@@ -31,8 +31,10 @@ function logDbTarget(url: string) {
 
 import { neon } from '@neondatabase/serverless'
 import { drizzle } from 'drizzle-orm/neon-http'
-import { eq, and } from 'drizzle-orm'
+import { eq, and, or, sql } from 'drizzle-orm'
 import * as schema from '../lib/db/schema'
+import { buildBaasDemoDocumentPdfBuffer } from './seed-contract-pdf'
+import { BAAS_DEMO_DOC_BODIES } from './baas-demo-doc-bodies'
 
 const DATABASE_URL = normalizeDatabaseUrl(process.env.DATABASE_URL)
 if (!DATABASE_URL) {
@@ -41,10 +43,9 @@ if (!DATABASE_URL) {
 }
 logDbTarget(DATABASE_URL)
 
-const sql = neon(DATABASE_URL)
-const db = drizzle(sql, { schema })
+const neonClient = neon(DATABASE_URL)
+const db = drizzle(neonClient, { schema })
 
-const DEMO_PDF = 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'
 const ORG_SLUG = 'baas-bv-demo'
 
 /** Opdrachtgevers / samenwerkingspartijen (excl. Baas = tenant). */
@@ -704,35 +705,86 @@ async function main() {
     const contractId = contractIdByDemo.get(d.contractDemoId)
     if (!contractId) continue
 
+    const dc = DEMO_CONTRACTS.find((x) => x.demoId === d.contractDemoId)
+    if (!dc) continue
+
+    const sections = BAAS_DEMO_DOC_BODIES[d.id]
+    if (!sections?.length) {
+      console.warn(`⚠ Geen demobody voor ${d.id}, overgeslagen`)
+      continue
+    }
+
     const safeName = `${d.id}-${d.title.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 80)}.pdf`
-    const exists = await db.query.contractDocuments.findFirst({
-      where: and(eq(schema.contractDocuments.contractId, contractId), eq(schema.contractDocuments.filename, safeName)),
+    const metaLines = [
+      `Contractnummer: ${dc.contractNumber}`,
+      `Opdrachtgever: ${orgName(dc.principalDemoId)}`,
+      `Opdrachtnemer: Baas B.V.`,
+      `Documenttype (demo): ${d.documentType}`,
+      `Versie: ${d.version}`,
+      `Ondertekend: ${d.signedDate}`,
+      `Referentie: ${d.fileRef}`,
+    ]
+
+    const pdfBuf = await buildBaasDemoDocumentPdfBuffer({
+      documentTitle: d.title,
+      metaLines,
+      sections,
     })
-    if (exists) continue
+    const dataUrl = `data:application/pdf;base64,${pdfBuf.toString('base64')}`
+
+    const existing = await db.query.contractDocuments.findFirst({
+      where: and(
+        eq(schema.contractDocuments.contractId, contractId),
+        or(
+          sql`${schema.contractDocuments.aiExtractedDataJson}->>'demoDocId' = ${d.id}`,
+          eq(schema.contractDocuments.filename, safeName)
+        )
+      ),
+    })
+
+    const aiExtractedDataJson = {
+      seed: 'baas-infra',
+      demoDocId: d.id,
+      documentType: d.documentType,
+      fileRef: d.fileRef,
+      title: d.title,
+      version: d.version,
+      contractNumber: dc.contractNumber,
+      principalDemoId: dc.principalDemoId,
+    }
+
+    if (existing) {
+      await db
+        .update(schema.contractDocuments)
+        .set({
+          filename: safeName,
+          fileUrl: dataUrl,
+          fileType: 'application/pdf',
+          fileSize: pdfBuf.length,
+          documentKind: docKindFromType(d.documentType),
+          aiProcessed: true,
+          aiExtractedDataJson,
+        })
+        .where(eq(schema.contractDocuments.id, existing.id))
+      continue
+    }
 
     await db.insert(schema.contractDocuments).values({
       contractId,
       filename: safeName,
-      fileUrl: DEMO_PDF,
+      fileUrl: dataUrl,
       fileType: 'application/pdf',
-      fileSize: 2048,
+      fileSize: pdfBuf.length,
       versionNumber: parseInt(d.version.split('.')[0], 10) || 1,
       isCurrent: true,
       documentKind: docKindFromType(d.documentType),
       uploadedBy: manager.id,
       uploadedAt: new Date(d.signedDate),
       aiProcessed: true,
-      aiExtractedDataJson: {
-        seed: 'baas-infra',
-        demoDocId: d.id,
-        documentType: d.documentType,
-        fileRef: d.fileRef,
-        title: d.title,
-        version: d.version,
-      },
+      aiExtractedDataJson,
     })
   }
-  console.log(`✓ Contractdocumenten geïmporteerd (per contract waar nodig)`)
+  console.log(`✓ Contractdocumenten met inhoud (PDF) gezet of bijgewerkt`)
 
   for (const cl of CLAUSES) {
     const contractId = contractIdByDemo.get(cl.contractDemoId)

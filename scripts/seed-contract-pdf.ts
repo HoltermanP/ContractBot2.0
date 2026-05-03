@@ -1,6 +1,6 @@
 /**
  * Genereert eenvoudige maar leesbare Nederlandse contract-PDF’s voor seed-data (Blob).
- * Alleen gebruikt door scripts/seed.ts — geen runtime dependency van de app.
+ * Gebruikt door scripts/seed.ts en scripts/seed-baas-demo.ts — geen runtime dependency van de app.
  */
 import { format } from 'date-fns'
 import { nl } from 'date-fns/locale'
@@ -233,6 +233,69 @@ export async function buildSeedContractPdfBuffer(input: SeedContractPdfInput): P
     input.seedDocKind === 'main' ? bodyMain(input) : input.seedDocKind === 'annex' ? bodyAnnex(input) : bodyOrder(input)
   drawHeading(layout, input.seedDocKind === 'main' ? 'Clausules' : 'Inhoud bijlage')
   drawLines(layout, wrapBlocks(body, font, FONT_SIZE))
+
+  const bytes = await pdf.save()
+  return Buffer.from(bytes)
+}
+
+/** Secties voor Baas-infra demodocumenten (pdf-lib, zelfde lay-out als seed-PDF’s). */
+export type BaasDemoPdfSection = {
+  heading: string
+  paragraphs: string[]
+}
+
+export type BaasDemoPdfInput = {
+  documentTitle: string
+  metaLines: string[]
+  sections: BaasDemoPdfSection[]
+}
+
+export async function buildBaasDemoDocumentPdfBuffer(input: BaasDemoPdfInput): Promise<Buffer> {
+  const pdf = await PDFDocument.create()
+  const font = await pdf.embedFont(StandardFonts.Helvetica)
+  const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold)
+
+  let page = pdf.addPage([A4_W, A4_H])
+  let y = A4_H - M
+  const layout: Layout = { pdf, page, y, font, fontBold }
+
+  ensureSpace(layout, TITLE_SIZE + LINE * 3)
+  layout.page.drawText('BAAS B.V. — DEMO CONTRACTDOCUMENT', {
+    x: M,
+    y: layout.y,
+    size: TITLE_SIZE,
+    font: fontBold,
+  })
+  layout.y -= LINE * 2
+
+  layout.page.drawText(input.documentTitle, {
+    x: M,
+    y: layout.y,
+    size: HEADING_SIZE,
+    font: fontBold,
+  })
+  layout.y -= LINE * 2
+
+  drawHeading(layout, 'Documentgegevens')
+  drawLines(layout, wrapBlocks(input.metaLines, font, FONT_SIZE))
+
+  for (const sec of input.sections) {
+    drawHeading(layout, sec.heading)
+    const paras = sec.paragraphs.flatMap((p, i) => (i < sec.paragraphs.length - 1 ? [p, ''] : [p]))
+    drawLines(layout, wrapBlocks(paras, font, FONT_SIZE))
+  }
+
+  drawLines(
+    layout,
+    wrapBlocks(
+      [
+        '',
+        '(Fictieve demotekst voor ontwikkel- en testdoeleinden; geen rechtsgeldig contract en geen juridisch advies.)',
+      ],
+      font,
+      8
+    )
+  )
 
   const bytes = await pdf.save()
   return Buffer.from(bytes)
