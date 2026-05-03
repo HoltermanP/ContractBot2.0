@@ -30,6 +30,7 @@ export default async function DashboardPage() {
     openObligations,
     pendingApprovals,
     recentContracts,
+    contractsForChart,
     notifications,
   ] = await Promise.all([
     db.select({ count: count() }).from(contracts)
@@ -54,6 +55,14 @@ export default async function DashboardPage() {
       limit: 10,
       with: { supplier: true },
     }),
+    db
+      .select({
+        id: contracts.id,
+        endDate: contracts.endDate,
+        status: contracts.status,
+      })
+      .from(contracts)
+      .where(eq(contracts.orgId, user.orgId)),
     db.query.dashboardNotifications.findMany({
       where: and(
         eq(dashboardNotifications.orgId, user.orgId),
@@ -224,7 +233,7 @@ export default async function DashboardPage() {
       <div className="grid grid-cols-3 gap-6">
         {/* Chart */}
         <div className="col-span-2">
-          <DashboardChart contracts={recentContracts} />
+          <DashboardChart contracts={contractsForChart} />
         </div>
 
         {/* Notifications */}

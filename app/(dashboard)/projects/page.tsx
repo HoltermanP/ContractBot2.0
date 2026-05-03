@@ -3,13 +3,12 @@ import { getOrCreateUser } from '@/lib/auth'
 import { db, projects } from '@/lib/db'
 import { eq } from 'drizzle-orm'
 import { redirect } from 'next/navigation'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Plus } from 'lucide-react'
-import { formatDate } from '@/lib/utils'
+import { FolderKanban, Plus } from 'lucide-react'
 import { ensureDefaultProjectForOrg } from '@/lib/org'
 import { canManageProjects } from '@/lib/permissions'
 import { NewProjectForm } from './new-project-form'
+import { ProjectListRow } from '@/components/projects/project-list-row'
 
 export default async function ProjectsPage() {
   const user = await getOrCreateUser()
@@ -23,53 +22,82 @@ export default async function ProjectsPage() {
   })
 
   return (
-    <div className="space-y-6 max-w-4xl">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Projecten</h1>
-          <p className="text-muted-foreground">
-            Contracten worden onder een project gehangen. Standaard bestaat het project &quot;Algemeen&quot;.
+    <div className="mx-auto max-w-4xl space-y-8">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 sm:text-3xl">Projecten</h1>
+          <p className="max-w-xl text-sm leading-relaxed text-zinc-600">
+            U koppelt contracten aan een project om mappen overzichtelijk te houden. Standaard bestaat het project{' '}
+            <span className="font-medium text-zinc-800">&quot;Algemeen&quot;</span>.
+          </p>
+          <p className="text-sm font-medium text-zinc-500">
+            <span className="tabular-nums text-zinc-900">{list.length}</span>{' '}
+            {list.length === 1 ? 'project' : 'projecten'}
           </p>
         </div>
         {canManageProjects(user.role) && (
-          <Button asChild>
+          <Button asChild className="shrink-0 rounded-xl shadow-sm">
             <Link href="/contracts/new">
-              <Plus className="h-4 w-4 mr-2" />
+              <Plus className="mr-2 h-4 w-4" aria-hidden />
               Nieuw contract
             </Link>
           </Button>
         )}
-      </div>
+      </header>
 
       {canManageProjects(user.role) && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Project aanmaken</CardTitle>
-          </CardHeader>
-          <CardContent>
+        <section
+          className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-[0_1px_0_rgba(0,0,0,0.04)]"
+          aria-label="Nieuw project aanmaken"
+        >
+          <div className="border-b border-zinc-100 bg-zinc-50/80 px-4 py-3 sm:px-6">
+            <h2 className="text-sm font-medium text-zinc-800">Project aanmaken</h2>
+            <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
+              Naam en optioneel een omschrijving; daarna opent het nieuwe project.
+            </p>
+          </div>
+          <div className="p-4 sm:p-6">
             <NewProjectForm />
-          </CardContent>
-        </Card>
+          </div>
+        </section>
       )}
 
-      <Card>
-        <CardContent className="pt-6 divide-y">
-          {list.map((p) => (
-            <Link
-              key={p.id}
-              href={`/projects/${p.id}`}
-              className="flex items-center justify-between py-4 first:pt-0 hover:bg-slate-50/80 -mx-2 px-2 rounded-lg transition-colors"
-            >
-              <div>
-                <p className="font-medium text-slate-900">{p.name}</p>
-                {p.description && <p className="text-sm text-muted-foreground mt-0.5">{p.description}</p>}
-              </div>
-              <span className="text-xs text-muted-foreground shrink-0 ml-4">{formatDate(p.createdAt)}</span>
-            </Link>
-          ))}
-          {list.length === 0 && <p className="text-muted-foreground py-8 text-center">Geen projecten</p>}
-        </CardContent>
-      </Card>
+      <section
+        className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-[0_1px_0_rgba(0,0,0,0.04)]"
+        aria-labelledby="projects-list-heading"
+      >
+        <div className="border-b border-zinc-100 bg-zinc-50/80 px-4 py-3 sm:px-6">
+          <h2 id="projects-list-heading" className="text-sm font-medium text-zinc-800">
+            Alle projecten
+          </h2>
+          <p className="mt-0.5 text-xs text-zinc-500">Alfabetisch op naam · klik voor detail en contracten</p>
+        </div>
+
+        {list.length > 0 ? (
+          <ul className="m-0 list-none divide-y divide-zinc-100 p-0">
+            {list.map((p) => (
+              <ProjectListRow
+                key={p.id}
+                id={p.id}
+                name={p.name}
+                description={p.description}
+                createdAt={p.createdAt}
+              />
+            ))}
+          </ul>
+        ) : (
+          <div className="px-4 py-16 text-center sm:py-20">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-400">
+              <FolderKanban className="h-7 w-7" aria-hidden />
+            </div>
+            <p className="mt-4 text-sm font-medium text-zinc-800">Geen projecten</p>
+            <p className="mx-auto mt-1 max-w-sm text-sm leading-relaxed text-zinc-500">
+              Dit zou niet moeten voorkomen na het aanmaken van de standaardmap. Vernieuw de pagina of neem contact op
+              met een beheerder.
+            </p>
+          </div>
+        )}
+      </section>
     </div>
   )
 }

@@ -3,6 +3,7 @@ import { getOrCreateUser } from '@/lib/auth'
 import { db, contractDocuments } from '@/lib/db'
 import { eq } from 'drizzle-orm'
 import { downloadFileToBuffer } from '@/lib/blob-fetch'
+import { userFacingApiError } from '@/lib/user-facing-api-error'
 
 /**
  * Authenticated download: werkt voor private Vercel Blob én publieke URL’s.
@@ -59,7 +60,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       },
     })
   } catch (e) {
-    const message = e instanceof Error ? e.message : 'Download mislukt'
-    return NextResponse.json({ error: message }, { status: 502 })
+    return NextResponse.json({ error: userFacingApiError(e) }, { status: 502 })
   }
 }

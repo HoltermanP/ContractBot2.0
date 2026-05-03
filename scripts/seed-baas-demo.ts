@@ -710,12 +710,11 @@ async function main() {
     })
     if (exists) continue
 
-    const isPdf = d.fileRef.endsWith('.pdf')
     await db.insert(schema.contractDocuments).values({
       contractId,
       filename: safeName,
-      fileUrl: isPdf ? d.fileRef : DEMO_PDF,
-      fileType: isPdf ? 'application/pdf' : 'application/octet-stream',
+      fileUrl: DEMO_PDF,
+      fileType: 'application/pdf',
       fileSize: 2048,
       versionNumber: parseInt(d.version.split('.')[0], 10) || 1,
       isCurrent: true,

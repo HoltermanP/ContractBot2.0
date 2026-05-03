@@ -4,6 +4,7 @@ import { db, organizations, organizationMembers } from '@/lib/db'
 import { users, projects } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { slugifyOrganizationSlug } from '@/lib/org'
+import { userFacingApiError } from '@/lib/user-facing-api-error'
 
 type OrgRow = {
   orgId: string
@@ -56,8 +57,7 @@ export async function GET() {
       isGlobalAdmin: user.role === 'admin',
     })
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Fout'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return NextResponse.json({ error: userFacingApiError(err) }, { status: 500 })
   }
 }
 
@@ -95,7 +95,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ id: org.id, name: org.name, slug: org.slug })
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Fout'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return NextResponse.json({ error: userFacingApiError(err) }, { status: 500 })
   }
 }

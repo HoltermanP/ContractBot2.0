@@ -1,13 +1,15 @@
 import { neon } from '@neondatabase/serverless'
 import { drizzle } from 'drizzle-orm/neon-http'
 import * as schema from './schema'
+import { normalizeDatabaseUrlForNeonHttp } from './neon-url'
 
 function getDb() {
-  const url = process.env.DATABASE_URL
-  if (!url) {
+  const raw = process.env.DATABASE_URL
+  if (!raw) {
     // Return a proxy that throws on use (during build static analysis)
     throw new Error('DATABASE_URL not set')
   }
+  const url = normalizeDatabaseUrlForNeonHttp(raw)
   const sql = neon(url)
   return drizzle(sql, { schema })
 }

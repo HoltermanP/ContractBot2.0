@@ -48,21 +48,39 @@ export function NewProjectForm() {
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col sm:flex-row sm:items-end gap-3 flex-wrap">
-      <div className="space-y-1 flex-1 min-w-[200px]">
-        <Label htmlFor="p-name">Nieuw project</Label>
-        <Input id="p-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Naam" />
+    <form onSubmit={submit} className="flex flex-col gap-5">
+      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] md:items-end">
+        <div className="space-y-1.5">
+          <Label htmlFor="p-name" className="text-zinc-700">
+            Naam
+          </Label>
+          <Input
+            id="p-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Bijv. Inkoop 2025"
+            className="rounded-xl border-zinc-200"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="p-desc" className="font-normal text-zinc-500">
+            Omschrijving (optioneel)
+          </Label>
+          <Textarea
+            id="p-desc"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={2}
+            className="min-h-[72px] resize-y rounded-xl border-zinc-200"
+          />
+        </div>
       </div>
-      <div className="space-y-1 flex-[2] min-w-[220px]">
-        <Label htmlFor="p-desc" className="text-muted-foreground font-normal">
-          Omschrijving (optioneel)
-        </Label>
-        <Textarea id="p-desc" value={description} onChange={(e) => setDescription(e.target.value)} rows={1} className="min-h-[40px]" />
+      <div className="flex justify-start border-t border-zinc-100 pt-4">
+        <Button type="submit" disabled={loading} className="rounded-xl">
+          {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />}
+          Project aanmaken
+        </Button>
       </div>
-      <Button type="submit" disabled={loading} className="shrink-0">
-        {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-        Aanmaken
-      </Button>
     </form>
   )
 }

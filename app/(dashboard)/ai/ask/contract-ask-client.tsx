@@ -75,7 +75,6 @@ export default function ContractAskClient() {
   const [projects, setProjects] = useState<ProjectRow[]>([])
   const [scopeMode, setScopeMode] = useState<ScopeMode>('org')
   const [selectedScopeProjectId, setSelectedScopeProjectId] = useState('')
-  const [contractFilterProjectId, setContractFilterProjectId] = useState('')
   const [contractSearch, setContractSearch] = useState('')
   const [selectedContractId, setSelectedContractId] = useState('')
   const [referenceUrls, setReferenceUrls] = useState('')
@@ -199,30 +198,73 @@ export default function ContractAskClient() {
     [contracts, selectedContractId]
   )
 
-  const visibleContracts = useMemo(() => {
-    let list = contracts
-    if (scopeMode === 'single' && contractFilterProjectId) {
-      list = list.filter((c) => c.projectId === contractFilterProjectId)
-    }
-    const s = contractSearch.trim().toLowerCase()
-    if (s) {
-      list = list.filter(
-        (c) =>
-          c.title.toLowerCase().includes(s) ||
-          (c.contractNumber && c.contractNumber.toLowerCase().includes(s)) ||
-          (c.projectName && c.projectName.toLowerCase().includes(s))
+  const overviewGroups = useMemo(() => {
+    const q = contractSearch.trim().toLowerCase()
+    const projectIds = new Set(projects.map((p) => p.id))
+
+    function contractMatches(c: ContractRow) {
+      if (!q) return true
+      return (
+        c.title.toLowerCase().includes(q) ||
+        Boolean(c.contractNumber?.toLowerCase().includes(q)) ||
+        Boolean(c.projectName?.toLowerCase().includes(q))
       )
     }
-    return list
-  }, [contracts, scopeMode, contractFilterProjectId, contractSearch])
 
-  const contractOptions = useMemo(() => {
-    const sel = contracts.find((c) => c.id === selectedContractId)
-    if (sel && !visibleContracts.some((c) => c.id === sel.id)) {
-      return [sel, ...visibleContracts]
+    function projectMatches(p: ProjectRow) {
+      if (!q) return true
+      return p.name.toLowerCase().includes(q)
     }
-    return visibleContracts
-  }, [visibleContracts, contracts, selectedContractId])
+
+    const byTitle = (a: ContractRow, b: ContractRow) => a.title.localeCompare(b.title, 'nl', { sensitivity: 'base' })
+
+    const groups: { project: ProjectRow | null; contracts: ContractRow[] }[] = []
+
+    for (const p of projects) {
+      let projectContracts = contracts.filter((c) => c.projectId === p.id)
+      if (q) {
+        projectContracts = projectContracts.filter(contractMatches)
+        if (projectContracts.length === 0 && !projectMatches(p)) continue
+      }
+      groups.push({
+        project: p,
+        contracts: [...projectContracts].sort(byTitle),
+      })
+    }
+
+    const orphanIds = new Set<string>()
+    for (const c of contracts) {
+      if (c.projectId && !projectIds.has(c.projectId)) {
+        orphanIds.add(c.projectId)
+      }
+    }
+    for (const pid of orphanIds) {
+      let list = contracts.filter((c) => c.projectId === pid)
+      const name = list.find((c) => c.projectName)?.projectName?.trim() || 'Onbekend project'
+      if (q) {
+        list = list.filter(contractMatches)
+        const nameMatch = name.toLowerCase().includes(q)
+        if (list.length === 0 && !nameMatch) continue
+      }
+      groups.push({
+        project: { id: pid, name },
+        contracts: [...list].sort(byTitle),
+      })
+    }
+
+    const unassigned = contracts.filter((c) => !c.projectId)
+    if (unassigned.length > 0) {
+      let list = q ? unassigned.filter(contractMatches) : unassigned
+      if (list.length > 0) {
+        groups.push({
+          project: null,
+          contracts: [...list].sort(byTitle),
+        })
+      }
+    }
+
+    return groups
+  }, [contracts, projects, contractSearch])
 
   const selectedScopeProject = useMemo(
     () => projects.find((p) => p.id === selectedScopeProjectId) ?? null,
@@ -236,8 +278,6 @@ export default function ContractAskClient() {
       if (exists) {
         setScopeMode('single')
         setSelectedContractId(contractIdFromUrl)
-        const row = contracts.find((c) => c.id === contractIdFromUrl)
-        if (row?.projectId) setContractFilterProjectId(row.projectId)
       }
       return
     }
@@ -549,107 +589,150 @@ export default function ContractAskClient() {
         </div>
         <p className="mt-3 text-xs leading-relaxed text-zinc-500">
           Bij organisatie of project kiest de agent zelf relevante documenten. Bij één contract wordt alleen dat dossier
-          gebruikt.
+          gebruikt. Kies hieronder een project (hele map) of een enkel contract.
         </p>
+      </section>
 
-        {scopeMode === 'project' && (
-          <div className="mt-4 space-y-2 border-t border-zinc-100 pt-4">
-            <Label htmlFor="scope-project-select" className="text-xs text-zinc-600">
-              Project
-            </Label>
-            <select
-              id="scope-project-select"
-              value={selectedScopeProjectId}
-              onChange={(e) => setSelectedScopeProjectId(e.target.value)}
-              disabled={loading || projects.length === 0}
-              className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-900 shadow-sm outline-none transition-colors focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-            >
-              <option value="">Selecteer een project</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            {selectedScopeProject && (
-              <p className="text-xs text-zinc-500">
-                Contracten in <span className="font-medium text-zinc-800">{selectedScopeProject.name}</span> (beperkt aantal
-                documenten per rondgang).
-              </p>
-            )}
-          </div>
-        )}
+      <section
+        className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm"
+        aria-label="Projecten en contracten"
+      >
+        <p className="mb-1 text-xs font-medium uppercase tracking-wider text-zinc-400">Projecten &amp; contracten</p>
+        <p className="mb-3 text-xs leading-relaxed text-zinc-500">
+          Klik op een <span className="font-medium text-zinc-700">project</span> voor vragen over die map, of op een{' '}
+          <span className="font-medium text-zinc-700">contract</span> voor één dossier.
+        </p>
+        <div className="space-y-2">
+          <Label htmlFor="contract-search" className="text-xs text-zinc-600">
+            Zoeken
+          </Label>
+          <Input
+            id="contract-search"
+            placeholder="Project- of contractnaam, nummer…"
+            value={contractSearch}
+            onChange={(e) => setContractSearch(e.target.value)}
+            disabled={loading}
+            className="rounded-xl border-zinc-200 text-sm"
+          />
+        </div>
 
-        {scopeMode === 'single' && (
-          <div className="mt-4 space-y-3 border-t border-zinc-100 pt-4">
-            <div className="space-y-2">
-              <Label htmlFor="contract-filter-project" className="text-xs text-zinc-600">
-                Filter op project (optioneel)
-              </Label>
-              <select
-                id="contract-filter-project"
-                value={contractFilterProjectId}
-                onChange={(e) => {
-                  setContractFilterProjectId(e.target.value)
-                  setSelectedContractId('')
-                }}
-                disabled={loading || projects.length === 0}
-                className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm shadow-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-              >
-                <option value="">Alle projecten</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="contract-search" className="text-xs text-zinc-600">
-                Zoek in titel of nummer
-              </Label>
-              <Input
-                id="contract-search"
-                placeholder="Filter…"
-                value={contractSearch}
-                onChange={(e) => setContractSearch(e.target.value)}
-                disabled={loading}
-                className="rounded-xl border-zinc-200 text-sm"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="contract-select" className="text-xs text-zinc-600">
-                Contract
-              </Label>
-              <select
-                id="contract-select"
-                value={selectedContractId}
-                onChange={(e) => setSelectedContractId(e.target.value)}
-                disabled={loading || contracts.length === 0}
-                className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm shadow-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-              >
-                <option value="">Selecteer een contract</option>
-                {contractOptions.map((contract) => (
-                  <option key={contract.id} value={contract.id}>
-                    {contract.projectName ? `[${contract.projectName}] ` : ''}
-                    {contract.title}
-                    {contract.contractNumber ? ` (#${contract.contractNumber})` : ''}
-                  </option>
-                ))}
-              </select>
-              {selectedContract && (
-                <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-                  <span>
-                    Geselecteerd: <span className="font-medium text-zinc-800">{selectedContract.title}</span>
-                  </span>
-                  <Badge variant="secondary" className="text-[10px] font-normal">
-                    {selectedContract.status}
-                  </Badge>
-                </div>
-              )}
-            </div>
+        <div className="mt-3 max-h-[min(42vh,340px)] overflow-y-auto overscroll-contain rounded-xl border border-zinc-100 bg-zinc-50/40">
+          {contracts.length === 0 ? (
+            <p className="p-4 text-xs leading-relaxed text-zinc-500">
+              Nog geen contracten. Voeg er een toe onder{' '}
+              <Link href="/contracts" className="font-medium text-zinc-800 underline-offset-2 hover:underline">
+                Contracten
+              </Link>
+              .
+            </p>
+          ) : overviewGroups.length === 0 ? (
+            <p className="p-4 text-xs text-zinc-500">Geen resultaten voor deze zoekopdracht.</p>
+          ) : (
+            <ul className="divide-y divide-zinc-100/90 p-1">
+              {overviewGroups.map((group) => {
+                const p = group.project
+                const projectSelected = Boolean(p && scopeMode === 'project' && selectedScopeProjectId === p.id)
+                return (
+                  <li key={p ? p.id : 'unassigned'} className="py-1">
+                    {p ? (
+                      <button
+                        type="button"
+                        disabled={loading}
+                        onClick={() => {
+                          setScopeMode('project')
+                          setSelectedScopeProjectId(p.id)
+                          setSelectedContractId('')
+                        }}
+                        className={cn(
+                          'flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium transition-colors',
+                          projectSelected
+                            ? 'bg-zinc-900 text-white shadow-sm'
+                            : 'text-zinc-800 hover:bg-white hover:shadow-sm'
+                        )}
+                      >
+                        <span className="min-w-0 truncate">{p.name}</span>
+                        <span
+                          className={cn(
+                            'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium tabular-nums sm:text-[11px]',
+                            projectSelected ? 'bg-white/15 text-white' : 'bg-zinc-200/80 text-zinc-600'
+                          )}
+                        >
+                          {group.contracts.length}
+                        </span>
+                      </button>
+                    ) : (
+                      <p className="px-2.5 py-2 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+                        Zonder project
+                      </p>
+                    )}
+                    <ul className="mt-0.5 space-y-0.5 pb-1 pl-1 sm:pl-2" role="list">
+                      {group.contracts.map((c) => {
+                        const contractSelected = scopeMode === 'single' && selectedContractId === c.id
+                        return (
+                          <li key={c.id}>
+                            <button
+                              type="button"
+                              disabled={loading}
+                              onClick={() => {
+                                setScopeMode('single')
+                                setSelectedContractId(c.id)
+                              }}
+                              className={cn(
+                                'flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors sm:text-[13px]',
+                                contractSelected
+                                  ? 'bg-blue-600 text-white shadow-sm'
+                                  : 'text-zinc-700 hover:bg-white hover:shadow-sm'
+                              )}
+                            >
+                              <FileText
+                                className={cn(
+                                  'mt-0.5 h-3.5 w-3.5 shrink-0 opacity-80',
+                                  contractSelected ? 'text-white' : 'text-zinc-400'
+                                )}
+                                aria-hidden
+                              />
+                              <span className="min-w-0 flex-1 leading-snug">
+                                <span className="line-clamp-2 font-medium">{c.title}</span>
+                                {c.contractNumber ? (
+                                  <span
+                                    className={cn(
+                                      'mt-0.5 block text-[11px] tabular-nums',
+                                      contractSelected ? 'text-blue-100' : 'text-zinc-500'
+                                    )}
+                                  >
+                                    #{c.contractNumber}
+                                  </span>
+                                ) : null}
+                              </span>
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
+
+        {scopeMode === 'project' && selectedScopeProject ? (
+          <p className="mt-3 text-xs text-zinc-500">
+            Actief: project{' '}
+            <span className="font-medium text-zinc-800">{selectedScopeProject.name}</span> — de agent kiest relevante
+            documenten (beperkt aantal per rondgang).
+          </p>
+        ) : null}
+        {scopeMode === 'single' && selectedContract ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+            <span>
+              Actief: <span className="font-medium text-zinc-800">{selectedContract.title}</span>
+            </span>
+            <Badge variant="secondary" className="text-[10px] font-normal">
+              {selectedContract.status}
+            </Badge>
           </div>
-        )}
+        ) : null}
       </section>
 
       <details className="group rounded-2xl border border-dashed border-zinc-200/90 bg-zinc-50/50 px-4 py-3 text-sm text-zinc-600 open:border-zinc-300 open:bg-white">
@@ -734,7 +817,7 @@ export default function ContractAskClient() {
                       Geen projecten beschikbaar. Maak eerst een project aan onder <Link href="/projects" className="underline">Projecten</Link>.
                     </>
                   ) : (
-                    <>Kies een project bij Zoekbereik hierboven.</>
+                    <>Kies een project in de lijst &quot;Projecten &amp; contracten&quot;.</>
                   )
                 ) : scopeMode === 'single' && !selectedContractId ? (
                   contracts.length === 0 ? (
@@ -743,7 +826,7 @@ export default function ContractAskClient() {
                       <Link href="/contracts" className="underline">Contracten</Link>.
                     </>
                   ) : (
-                    <>Kies een contract bij Zoekbereik (modus &quot;Eén contract&quot;).</>
+                    <>Klik op een contract in de lijst hierboven (of kies eerst &quot;Project&quot; voor een hele map).</>
                   )
                 ) : null}
               </p>

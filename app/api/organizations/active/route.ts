@@ -3,6 +3,7 @@ import { ensureOrgMembership, getOrCreateUser } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { organizationMembers, organizations, users } from '@/lib/db/schema'
 import { and, eq } from 'drizzle-orm'
+import { userFacingApiError } from '@/lib/user-facing-api-error'
 
 export async function POST(req: NextRequest) {
   try {
@@ -43,7 +44,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true, orgId: membership.orgId, role: membership.role })
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Fout'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return NextResponse.json({ error: userFacingApiError(err) }, { status: 500 })
   }
 }
