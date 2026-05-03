@@ -16,8 +16,9 @@ import {
   FileText,
   Send,
   MessageSquare,
+  ChevronDown,
 } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { cn, formatDate, STATUS_LABELS } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
@@ -31,6 +32,7 @@ type ContractRow = {
   status: string
   projectId: string | null
   projectName: string | null
+  endDate: string | null
 }
 
 type ProjectRow = { id: string; name: string }
@@ -64,7 +66,13 @@ type ChatMessage = {
 
 type FaqCluster = { id: string; label: string; askCount: number }
 
-type ScopeMode = 'org' | 'project' | 'single'
+type ScopeMode = 'org' | 'project'
+
+/** Lijstfilter: leeg = alle projecten; anders project-id; __unassigned__ = contracten zonder project */
+const LIST_FILTER_UNASSIGNED = '__unassigned__'
+
+/** Gelijk aan server-side MAX_CONTEXT_CONTRACTS voor beheerbare context */
+const MAX_SELECTED_CONTRACTS = 5
 
 export default function ContractAskClient() {
   const searchParams = useSearchParams()
@@ -76,7 +84,10 @@ export default function ContractAskClient() {
   const [scopeMode, setScopeMode] = useState<ScopeMode>('org')
   const [selectedScopeProjectId, setSelectedScopeProjectId] = useState('')
   const [contractSearch, setContractSearch] = useState('')
-  const [selectedContractId, setSelectedContractId] = useState('')
+  /** Filter op project voor de contractlijst in de balk bovenaan. */
+  const [listFilterProjectId, setListFilterProjectId] = useState('')
+  /** Meerdere contracten: AI gebruikt uitsluitend deze dossiers. Leeg = brede portfolio-zoekslag (of heel project). */
+  const [selectedContractIds, setSelectedContractIds] = useState<string[]>([])
   const [referenceUrls, setReferenceUrls] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -94,14 +105,22 @@ export default function ContractAskClient() {
         const data = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : []
         if (!cancelled && data.length >= 0) {
           setContracts(
-            data.map((c: ContractRow & { project?: { id: string; name: string } | null }) => ({
-              id: c.id,
-              title: c.title,
-              contractNumber: c.contractNumber,
-              status: c.status,
-              projectId: c.projectId ?? c.project?.id ?? null,
-              projectName: c.project?.name ?? null,
-            }))
+            data.map((c: ContractRow & { project?: { id: string; name: string } | null; endDate?: unknown }) => {
+              let endDate: string | null = null
+              const raw = (c as { endDate?: unknown }).endDate
+              if (raw != null) {
+                endDate = typeof raw === 'string' ? raw : raw instanceof Date ? raw.toISOString() : null
+              }
+              return {
+                id: c.id,
+                title: c.title,
+                contractNumber: c.contractNumber,
+                status: c.status,
+                projectId: c.projectId ?? c.project?.id ?? null,
+                projectName: c.project?.name ?? null,
+                endDate,
+              }
+            })
           )
         }
       } catch {
@@ -193,78 +212,47 @@ export default function ContractAskClient() {
     }
   }
 
-  const selectedContract = useMemo(
-    () => contracts.find((contract) => contract.id === selectedContractId) ?? null,
-    [contracts, selectedContractId]
-  )
-
-  const overviewGroups = useMemo(() => {
-    const q = contractSearch.trim().toLowerCase()
-    const projectIds = new Set(projects.map((p) => p.id))
-
-    function contractMatches(c: ContractRow) {
-      if (!q) return true
-      return (
-        c.title.toLowerCase().includes(q) ||
-        Boolean(c.contractNumber?.toLowerCase().includes(q)) ||
-        Boolean(c.projectName?.toLowerCase().includes(q))
-      )
-    }
-
-    function projectMatches(p: ProjectRow) {
-      if (!q) return true
-      return p.name.toLowerCase().includes(q)
-    }
-
-    const byTitle = (a: ContractRow, b: ContractRow) => a.title.localeCompare(b.title, 'nl', { sensitivity: 'base' })
-
-    const groups: { project: ProjectRow | null; contracts: ContractRow[] }[] = []
-
-    for (const p of projects) {
-      let projectContracts = contracts.filter((c) => c.projectId === p.id)
-      if (q) {
-        projectContracts = projectContracts.filter(contractMatches)
-        if (projectContracts.length === 0 && !projectMatches(p)) continue
-      }
-      groups.push({
-        project: p,
-        contracts: [...projectContracts].sort(byTitle),
-      })
-    }
-
+  const projectFilterOptions = useMemo(() => {
+    const knownIds = new Set(projects.map((p) => p.id))
+    const opts: { id: string; label: string; count: number }[] = projects.map((p) => ({
+      id: p.id,
+      label: p.name,
+      count: contracts.filter((c) => c.projectId === p.id).length,
+    }))
     const orphanIds = new Set<string>()
     for (const c of contracts) {
-      if (c.projectId && !projectIds.has(c.projectId)) {
-        orphanIds.add(c.projectId)
-      }
+      if (c.projectId && !knownIds.has(c.projectId)) orphanIds.add(c.projectId)
     }
     for (const pid of orphanIds) {
-      let list = contracts.filter((c) => c.projectId === pid)
+      const list = contracts.filter((c) => c.projectId === pid)
       const name = list.find((c) => c.projectName)?.projectName?.trim() || 'Onbekend project'
-      if (q) {
-        list = list.filter(contractMatches)
-        const nameMatch = name.toLowerCase().includes(q)
-        if (list.length === 0 && !nameMatch) continue
-      }
-      groups.push({
-        project: { id: pid, name },
-        contracts: [...list].sort(byTitle),
-      })
+      opts.push({ id: pid, label: name, count: list.length })
     }
+    opts.sort((a, b) => a.label.localeCompare(b.label, 'nl', { sensitivity: 'base' }))
+    const unassignedCount = contracts.filter((c) => !c.projectId).length
+    return { opts, unassignedCount }
+  }, [projects, contracts])
 
-    const unassigned = contracts.filter((c) => !c.projectId)
-    if (unassigned.length > 0) {
-      let list = q ? unassigned.filter(contractMatches) : unassigned
-      if (list.length > 0) {
-        groups.push({
-          project: null,
-          contracts: [...list].sort(byTitle),
-        })
-      }
+  const filteredContractsForList = useMemo(() => {
+    let list: ContractRow[]
+    if (listFilterProjectId === LIST_FILTER_UNASSIGNED) {
+      list = contracts.filter((c) => !c.projectId)
+    } else if (listFilterProjectId) {
+      list = contracts.filter((c) => c.projectId === listFilterProjectId)
+    } else {
+      list = [...contracts]
     }
-
-    return groups
-  }, [contracts, projects, contractSearch])
+    const q = contractSearch.trim().toLowerCase()
+    if (q) {
+      list = list.filter(
+        (c) =>
+          c.title.toLowerCase().includes(q) ||
+          Boolean(c.contractNumber?.toLowerCase().includes(q)) ||
+          Boolean(c.projectName?.toLowerCase().includes(q))
+      )
+    }
+    return [...list].sort((a, b) => a.title.localeCompare(b.title, 'nl', { sensitivity: 'base' }))
+  }, [contracts, listFilterProjectId, contractSearch])
 
   const selectedScopeProject = useMemo(
     () => projects.find((p) => p.id === selectedScopeProjectId) ?? null,
@@ -276,24 +264,40 @@ export default function ContractAskClient() {
     if (contractIdFromUrl) {
       const exists = contracts.some((contract) => contract.id === contractIdFromUrl)
       if (exists) {
-        setScopeMode('single')
-        setSelectedContractId(contractIdFromUrl)
+        setScopeMode('org')
+        setSelectedScopeProjectId('')
+        setSelectedContractIds([contractIdFromUrl])
       }
       return
     }
     if (projectIdFromUrl && projects.some((p) => p.id === projectIdFromUrl)) {
       setScopeMode('project')
       setSelectedScopeProjectId(projectIdFromUrl)
+      setListFilterProjectId(projectIdFromUrl)
+      setSelectedContractIds([])
     }
   }, [contractIdFromUrl, projectIdFromUrl, contracts, projects])
 
-  /** Zorg dat project-modus niet op een lege projectkeuze blijft hangen (dan blijft Verstuur uitgeschakeld). */
   useEffect(() => {
-    if (scopeMode !== 'project') return
-    if (selectedScopeProjectId) return
-    if (projects.length === 0) return
-    setSelectedScopeProjectId(projects[0].id)
-  }, [scopeMode, selectedScopeProjectId, projects])
+    setSelectedContractIds((prev) =>
+      prev.filter((id) => {
+        const c = contracts.find((x) => x.id === id)
+        if (!c) return false
+        if (listFilterProjectId === LIST_FILTER_UNASSIGNED) return !c.projectId
+        if (listFilterProjectId && listFilterProjectId !== LIST_FILTER_UNASSIGNED) {
+          return c.projectId === listFilterProjectId
+        }
+        return true
+      })
+    )
+  }, [listFilterProjectId, contracts])
+
+  /** Lijstfilter gelijk trekken bij projectmodus (contracten van dat project tonen). */
+  useEffect(() => {
+    if (scopeMode === 'project' && selectedScopeProjectId) {
+      setListFilterProjectId(selectedScopeProjectId)
+    }
+  }, [scopeMode, selectedScopeProjectId])
 
   function scrollChatToBottom() {
     const el = chatScrollRef.current
@@ -321,7 +325,6 @@ export default function ContractAskClient() {
   async function submitQuestion(rawQuestion: string) {
     const q = rawQuestion.trim()
     if (!q) return
-    if (scopeMode === 'single' && !selectedContractId) return
     if (scopeMode === 'project' && !selectedScopeProjectId) return
 
     const userMessage: ChatMessage = {
@@ -336,19 +339,22 @@ export default function ContractAskClient() {
     setError(null)
 
     try {
-      const contractIds = scopeMode === 'single' ? [selectedContractId] : []
       const urls = referenceUrls
         .split(/\n/)
         .map((l) => l.trim())
         .filter(Boolean)
 
+      const explicitIds = [...new Set(selectedContractIds)].slice(0, MAX_SELECTED_CONTRACTS)
+      const wholeProject =
+        scopeMode === 'project' && Boolean(selectedScopeProjectId) && explicitIds.length === 0
+
       const payload: Record<string, unknown> = {
         question: q,
-        contractIds,
-        portfolioMode: scopeMode !== 'single',
+        contractIds: explicitIds,
+        portfolioMode: explicitIds.length === 0,
         referenceUrls: urls,
       }
-      if (scopeMode === 'project' && selectedScopeProjectId) {
+      if (wholeProject) {
         payload.projectId = selectedScopeProjectId
       }
 
@@ -441,20 +447,6 @@ export default function ContractAskClient() {
     }
   }
 
-  function handleQuestionKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
-    if (
-      loading ||
-      !question.trim() ||
-      (scopeMode === 'single' && !selectedContractId) ||
-      (scopeMode === 'project' && !selectedScopeProjectId)
-    ) {
-      return
-    }
-    e.preventDefault()
-    void submitQuestion(question)
-  }
-
   function sanitizeAssistantHtml(html: string) {
     return DOMPurify.sanitize(html, {
       ALLOWED_TAGS: [
@@ -502,11 +494,43 @@ export default function ContractAskClient() {
     }
   }
 
+  const bronnenSummary = useMemo(() => {
+    if (scopeMode === 'project' && selectedScopeProject && selectedContractIds.length === 0) {
+      return `Heel project: ${selectedScopeProject.name}`
+    }
+    if (selectedContractIds.length === 1) {
+      const c = contracts.find((x) => x.id === selectedContractIds[0])
+      return c ? `Alleen: ${c.title}` : '1 contract geselecteerd'
+    }
+    if (selectedContractIds.length > 1) {
+      return `Alleen: ${selectedContractIds.length} contracten (max. ${MAX_SELECTED_CONTRACTS})`
+    }
+    return 'Geen dossierkeuze — brede zoekslag over alle contracten'
+  }, [scopeMode, selectedScopeProject, selectedContractIds, contracts])
+
+  function toggleContractSelection(contractId: string) {
+    setScopeMode('org')
+    setSelectedScopeProjectId('')
+    setSelectedContractIds((prev) => {
+      if (prev.includes(contractId)) return prev.filter((id) => id !== contractId)
+      if (prev.length >= MAX_SELECTED_CONTRACTS) return prev
+      return [...prev, contractId]
+    })
+  }
+
   const canSubmit =
     !loading &&
     question.trim().length > 0 &&
-    (scopeMode !== 'single' || Boolean(selectedContractId)) &&
-    (scopeMode !== 'project' || Boolean(selectedScopeProjectId))
+    !(scopeMode === 'project' && !selectedScopeProjectId)
+
+  function handleQuestionKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.nativeEvent.isComposing) return
+    if (e.key !== 'Enter' || e.shiftKey) return
+    // Enter = versturen (geen nieuwe regel); Shift+Enter = standaard gedrag (nieuwe regel).
+    e.preventDefault()
+    if (!canSubmit) return
+    void submitQuestion(question)
+  }
 
   return (
     <div
@@ -521,244 +545,325 @@ export default function ContractAskClient() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-zinc-900 sm:text-2xl">Contractagent</h1>
           <p className="mt-0.5 max-w-xl text-sm text-zinc-500">
-            Vragen over uw contracten, met bronnen uit documenten en optioneel uit eigen URL&apos;s.
+            Zonder gekozen contract(en) zoekt de agent breed; met selectie alleen in die dossiers (meerdere mogelijk, tot{' '}
+            {MAX_SELECTED_CONTRACTS}).
           </p>
         </div>
         <div className="mt-2 flex items-center gap-2 text-xs text-zinc-400 sm:mt-0">
           <MessageSquare className="h-3.5 w-3.5" aria-hidden />
           <span className="hidden sm:inline">Eén doorlopend gesprek</span>
-          <span className="sm:hidden">Gesprek rechts</span>
+          <span className="sm:hidden">Antwoord rechts</span>
         </div>
       </header>
 
-      <div className="mt-6 flex min-h-0 flex-1 flex-col gap-6 overflow-hidden lg:flex-row lg:items-stretch lg:gap-8">
-        {/* Linkerpaneel: eigen scroll binnen vaste layout (geen sticky + page-scroll conflict) */}
-        <aside
-          className="w-full space-y-4 lg:min-h-0 lg:w-[min(100%,380px)] lg:shrink-0 lg:overflow-y-auto lg:overscroll-contain lg:pr-1 xl:w-[400px]"
-          aria-label="Zoekbereik en vraag"
-        >
-      {/* Zoekbereik: segment-knoppen i.p.v. losse kaart */}
-      <section
-        className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm"
-        aria-label="Zoekbereik"
-      >
-        <p className="mb-3 text-xs font-medium uppercase tracking-wider text-zinc-400">Zoekbereik</p>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            disabled={loading}
-            onClick={() => setScopeMode('org')}
-            className={cn(
-              'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors sm:text-sm',
-              scopeMode === 'org'
-                ? 'bg-zinc-900 text-white shadow-sm'
-                : 'bg-zinc-100/80 text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900'
-            )}
-          >
-            <Building2 className="h-3.5 w-3.5 shrink-0 opacity-90" />
-            Organisatie
-          </button>
-          <button
-            type="button"
-            disabled={loading}
-            onClick={() => setScopeMode('project')}
-            className={cn(
-              'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors sm:text-sm',
-              scopeMode === 'project'
-                ? 'bg-zinc-900 text-white shadow-sm'
-                : 'bg-zinc-100/80 text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900'
-            )}
-          >
-            <FolderOpen className="h-3.5 w-3.5 shrink-0 opacity-90" />
-            Project
-          </button>
-          <button
-            type="button"
-            disabled={loading}
-            onClick={() => setScopeMode('single')}
-            className={cn(
-              'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors sm:text-sm',
-              scopeMode === 'single'
-                ? 'bg-zinc-900 text-white shadow-sm'
-                : 'bg-zinc-100/80 text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900'
-            )}
-          >
-            <FileText className="h-3.5 w-3.5 shrink-0 opacity-90" />
-            Eén contract
-          </button>
-        </div>
-        <p className="mt-3 text-xs leading-relaxed text-zinc-500">
-          Bij organisatie of project kiest de agent zelf relevante documenten. Bij één contract wordt alleen dat dossier
-          gebruikt. Kies hieronder een project (hele map) of een enkel contract.
-        </p>
-      </section>
-
-      <section
-        className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm"
-        aria-label="Projecten en contracten"
-      >
-        <p className="mb-1 text-xs font-medium uppercase tracking-wider text-zinc-400">Projecten &amp; contracten</p>
-        <p className="mb-3 text-xs leading-relaxed text-zinc-500">
-          Klik op een <span className="font-medium text-zinc-700">project</span> voor vragen over die map, of op een{' '}
-          <span className="font-medium text-zinc-700">contract</span> voor één dossier.
-        </p>
-        <div className="space-y-2">
-          <Label htmlFor="contract-search" className="text-xs text-zinc-600">
-            Zoeken
-          </Label>
-          <Input
-            id="contract-search"
-            placeholder="Project- of contractnaam, nummer…"
-            value={contractSearch}
-            onChange={(e) => setContractSearch(e.target.value)}
-            disabled={loading}
-            className="rounded-xl border-zinc-200 text-sm"
-          />
-        </div>
-
-        <div className="mt-3 max-h-[min(42vh,340px)] overflow-y-auto overscroll-contain rounded-xl border border-zinc-100 bg-zinc-50/40">
-          {contracts.length === 0 ? (
-            <p className="p-4 text-xs leading-relaxed text-zinc-500">
-              Nog geen contracten. Voeg er een toe onder{' '}
-              <Link href="/contracts" className="font-medium text-zinc-800 underline-offset-2 hover:underline">
-                Contracten
-              </Link>
-              .
-            </p>
-          ) : overviewGroups.length === 0 ? (
-            <p className="p-4 text-xs text-zinc-500">Geen resultaten voor deze zoekopdracht.</p>
-          ) : (
-            <ul className="divide-y divide-zinc-100/90 p-1">
-              {overviewGroups.map((group) => {
-                const p = group.project
-                const projectSelected = Boolean(p && scopeMode === 'project' && selectedScopeProjectId === p.id)
+      {/* Inklapbare bronkeuze — standaard één regel, chat krijgt de ruimte */}
+      <section id="contractagent-bronnen-hub" className="mt-2 shrink-0" aria-label="Bronnen kiezen">
+        <details className="group rounded-lg border border-zinc-200/90 bg-white shadow-sm">
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-2 text-left marker:content-none [&::-webkit-details-marker]:hidden">
+            <ChevronDown
+              className="h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform group-open:rotate-180"
+              aria-hidden
+            />
+            <div className="min-w-0 flex-1">
+              <span className="text-[11px] font-semibold text-zinc-800">Bronnen</span>
+              <span className="mt-0.5 block truncate text-[10px] leading-snug text-zinc-500">{bronnenSummary}</span>
+            </div>
+          </summary>
+          <div className="border-t border-zinc-100 px-2 pb-2 pt-1">
+            <div id="contractagent-project-strip" className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[9px] font-bold uppercase tracking-wide text-blue-700">Project</span>
+              {listFilterProjectId && listFilterProjectId !== LIST_FILTER_UNASSIGNED ? (
+                <Button
+                  type="button"
+                  disabled={loading}
+                  size="sm"
+                  variant="secondary"
+                  className="h-6 rounded-md px-2 text-[10px] font-semibold"
+                  onClick={() => {
+                    setScopeMode('project')
+                    setSelectedScopeProjectId(listFilterProjectId)
+                    setSelectedContractIds([])
+                  }}
+                >
+                  Heel dit project
+                </Button>
+              ) : null}
+              {selectedContractIds.length > 0 ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={loading}
+                  className="h-6 px-2 text-[10px] text-zinc-600"
+                  onClick={() => setSelectedContractIds([])}
+                >
+                  Wis contractkeuze
+                </Button>
+              ) : null}
+            </div>
+            <div
+              className="mt-1 flex gap-1.5 overflow-x-auto overscroll-x-contain pb-0.5 pt-0.5 [scrollbar-width:thin]"
+              style={{ WebkitOverflowScrolling: 'touch' }}
+              role="list"
+            >
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => {
+                  setListFilterProjectId('')
+                  setScopeMode('org')
+                  setSelectedScopeProjectId('')
+                  setSelectedContractIds([])
+                }}
+                role="listitem"
+                className={cn(
+                  'flex w-[min(8.5rem,calc(100vw-6rem))] shrink-0 items-center gap-1.5 rounded-md border px-1.5 py-1 text-left text-[10px] transition-colors',
+                  listFilterProjectId === ''
+                    ? 'border-zinc-900 bg-zinc-900 text-white'
+                    : 'border-zinc-200 bg-zinc-50/80 text-zinc-900 hover:border-zinc-300'
+                )}
+              >
+                <span
+                  className={cn(
+                    'flex h-6 w-6 shrink-0 items-center justify-center rounded',
+                    listFilterProjectId === '' ? 'bg-white/15 text-white' : 'bg-zinc-200/80 text-zinc-600'
+                  )}
+                >
+                  <Building2 className="h-3 w-3" aria-hidden />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-semibold leading-tight">Alle</span>
+                  <span className={cn('text-[9px]', listFilterProjectId === '' ? 'text-zinc-300' : 'text-zinc-500')}>
+                    {contracts.length} st.
+                  </span>
+                </span>
+              </button>
+              {projectFilterOptions.opts.map((o) => {
+                const active = listFilterProjectId === o.id
                 return (
-                  <li key={p ? p.id : 'unassigned'} className="py-1">
-                    {p ? (
-                      <button
-                        type="button"
-                        disabled={loading}
-                        onClick={() => {
-                          setScopeMode('project')
-                          setSelectedScopeProjectId(p.id)
-                          setSelectedContractId('')
-                        }}
-                        className={cn(
-                          'flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium transition-colors',
-                          projectSelected
-                            ? 'bg-zinc-900 text-white shadow-sm'
-                            : 'text-zinc-800 hover:bg-white hover:shadow-sm'
-                        )}
-                      >
-                        <span className="min-w-0 truncate">{p.name}</span>
-                        <span
-                          className={cn(
-                            'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium tabular-nums sm:text-[11px]',
-                            projectSelected ? 'bg-white/15 text-white' : 'bg-zinc-200/80 text-zinc-600'
-                          )}
-                        >
-                          {group.contracts.length}
-                        </span>
-                      </button>
-                    ) : (
-                      <p className="px-2.5 py-2 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-                        Zonder project
-                      </p>
+                  <button
+                    key={o.id}
+                    type="button"
+                    disabled={loading}
+                    onClick={() => {
+                      setListFilterProjectId(o.id)
+                      setScopeMode('org')
+                      setSelectedScopeProjectId('')
+                    }}
+                    role="listitem"
+                    className={cn(
+                      'flex w-[min(8.5rem,calc(100vw-6rem))] shrink-0 items-center gap-1.5 rounded-md border px-1.5 py-1 text-left text-[10px] transition-colors',
+                      active
+                        ? 'border-zinc-900 bg-zinc-900 text-white'
+                        : 'border-zinc-200 bg-white text-zinc-900 hover:border-zinc-300'
                     )}
-                    <ul className="mt-0.5 space-y-0.5 pb-1 pl-1 sm:pl-2" role="list">
-                      {group.contracts.map((c) => {
-                        const contractSelected = scopeMode === 'single' && selectedContractId === c.id
-                        return (
-                          <li key={c.id}>
-                            <button
-                              type="button"
-                              disabled={loading}
-                              onClick={() => {
-                                setScopeMode('single')
-                                setSelectedContractId(c.id)
-                              }}
-                              className={cn(
-                                'flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors sm:text-[13px]',
-                                contractSelected
-                                  ? 'bg-blue-600 text-white shadow-sm'
-                                  : 'text-zinc-700 hover:bg-white hover:shadow-sm'
-                              )}
-                            >
-                              <FileText
-                                className={cn(
-                                  'mt-0.5 h-3.5 w-3.5 shrink-0 opacity-80',
-                                  contractSelected ? 'text-white' : 'text-zinc-400'
-                                )}
-                                aria-hidden
-                              />
-                              <span className="min-w-0 flex-1 leading-snug">
-                                <span className="line-clamp-2 font-medium">{c.title}</span>
-                                {c.contractNumber ? (
-                                  <span
-                                    className={cn(
-                                      'mt-0.5 block text-[11px] tabular-nums',
-                                      contractSelected ? 'text-blue-100' : 'text-zinc-500'
-                                    )}
-                                  >
-                                    #{c.contractNumber}
-                                  </span>
-                                ) : null}
-                              </span>
-                            </button>
-                          </li>
-                        )
-                      })}
-                    </ul>
-                  </li>
+                  >
+                    <span
+                      className={cn(
+                        'flex h-6 w-6 shrink-0 items-center justify-center rounded',
+                        active ? 'bg-white/15 text-white' : 'bg-emerald-50 text-emerald-700'
+                      )}
+                    >
+                      <FolderOpen className="h-3 w-3" aria-hidden />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="line-clamp-2 font-semibold leading-snug">{o.label}</span>
+                      <span className={cn('text-[9px]', active ? 'text-zinc-300' : 'text-zinc-500')}>{o.count} st.</span>
+                    </span>
+                  </button>
                 )
               })}
-            </ul>
-          )}
-        </div>
+              {projectFilterOptions.unassignedCount > 0 ? (
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => {
+                    setListFilterProjectId(LIST_FILTER_UNASSIGNED)
+                    setScopeMode('org')
+                    setSelectedScopeProjectId('')
+                  }}
+                  role="listitem"
+                  className={cn(
+                    'flex w-[min(8.5rem,calc(100vw-6rem))] shrink-0 items-center gap-1.5 rounded-md border border-dashed px-1.5 py-1 text-left text-[10px] transition-colors',
+                    listFilterProjectId === LIST_FILTER_UNASSIGNED
+                      ? 'border-zinc-900 bg-zinc-900 text-white'
+                      : 'border-zinc-200 bg-zinc-50 text-zinc-800 hover:border-zinc-300'
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'flex h-6 w-6 shrink-0 items-center justify-center rounded',
+                      listFilterProjectId === LIST_FILTER_UNASSIGNED
+                        ? 'bg-white/15 text-white'
+                        : 'bg-zinc-200/80 text-zinc-600'
+                    )}
+                  >
+                    <FolderOpen className="h-3 w-3 opacity-80" aria-hidden />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-semibold leading-tight">Zonder proj.</span>
+                    <span
+                      className={cn(
+                        'text-[9px]',
+                        listFilterProjectId === LIST_FILTER_UNASSIGNED ? 'text-zinc-300' : 'text-zinc-500'
+                      )}
+                    >
+                      {projectFilterOptions.unassignedCount} st.
+                    </span>
+                  </span>
+                </button>
+              ) : null}
+            </div>
 
-        {scopeMode === 'project' && selectedScopeProject ? (
-          <p className="mt-3 text-xs text-zinc-500">
-            Actief: project{' '}
-            <span className="font-medium text-zinc-800">{selectedScopeProject.name}</span> — de agent kiest relevante
-            documenten (beperkt aantal per rondgang).
-          </p>
-        ) : null}
-        {scopeMode === 'single' && selectedContract ? (
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-            <span>
-              Actief: <span className="font-medium text-zinc-800">{selectedContract.title}</span>
-            </span>
-            <Badge variant="secondary" className="text-[10px] font-normal">
-              {selectedContract.status}
-            </Badge>
+            <div id="contractagent-contract-strip" className="mt-1.5 border-t border-zinc-50 pt-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[9px] font-bold uppercase tracking-wide text-blue-700">Contract</span>
+                <span className="text-[9px] text-zinc-400">klik om aan/uit · max. {MAX_SELECTED_CONTRACTS}</span>
+                <div className="ml-auto w-full min-w-[8rem] max-w-[14rem] sm:w-44">
+                  <Label htmlFor="contract-search" className="sr-only">
+                    Zoek contract
+                  </Label>
+                  <Input
+                    id="contract-search"
+                    placeholder="Zoeken…"
+                    value={contractSearch}
+                    onChange={(e) => setContractSearch(e.target.value)}
+                    disabled={loading}
+                    className="h-7 rounded-md border-zinc-200 text-[11px]"
+                  />
+                </div>
+              </div>
+              <div
+                className="mt-1 flex max-h-[5rem] gap-1.5 overflow-x-auto overflow-y-hidden overscroll-x-contain pb-0.5 [scrollbar-width:thin]"
+                style={{ WebkitOverflowScrolling: 'touch' }}
+                role="list"
+              >
+                {contracts.length === 0 ? (
+                  <p className="w-full rounded border border-zinc-200 bg-zinc-50/80 px-2 py-1.5 text-[10px] text-zinc-600" role="status">
+                    Geen contracten —{' '}
+                    <Link href="/contracts" className="font-medium underline-offset-2 hover:underline">
+                      toevoegen
+                    </Link>
+                  </p>
+                ) : filteredContractsForList.length === 0 ? (
+                  <p className="w-full rounded border border-amber-200/80 bg-amber-50/80 px-2 py-1.5 text-[10px] text-amber-950" role="status">
+                    Geen resultaat.
+                  </p>
+                ) : (
+                  filteredContractsForList.map((c) => {
+                    const contractSelected = selectedContractIds.includes(c.id)
+                    const atMax = selectedContractIds.length >= MAX_SELECTED_CONTRACTS
+                    const statusLabel = STATUS_LABELS[c.status] ?? c.status
+                    const statusVariant =
+                      c.status === 'actief' ? 'success' : c.status === 'verlopen' ? 'danger' : 'outline'
+                    const showProject = !listFilterProjectId && c.projectName
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        disabled={loading || (!contractSelected && atMax)}
+                        role="listitem"
+                        title={
+                          !contractSelected && atMax
+                            ? `Maximaal ${MAX_SELECTED_CONTRACTS} contracten`
+                            : 'Toggle selectie voor deze vraag'
+                        }
+                        aria-pressed={contractSelected}
+                        onClick={() => toggleContractSelection(c.id)}
+                        className={cn(
+                          'relative flex w-[min(9rem,calc(100vw-6rem))] shrink-0 flex-col rounded-md border px-1.5 py-1 text-left text-[10px] transition-all sm:w-[9.5rem]',
+                          contractSelected
+                            ? 'border-blue-600 bg-blue-600 text-white shadow-sm'
+                            : 'border-zinc-200 bg-white hover:border-zinc-300',
+                          !contractSelected && atMax && 'opacity-45'
+                        )}
+                      >
+                        {contractSelected ? (
+                          <Check className="absolute right-1 top-1 h-3 w-3 text-blue-100" aria-hidden />
+                        ) : null}
+                        <div className="flex items-start gap-1 pr-3">
+                          <FileText
+                            className={cn(
+                              'mt-0.5 h-3 w-3 shrink-0',
+                              contractSelected ? 'text-blue-100' : 'text-blue-600'
+                            )}
+                            aria-hidden
+                          />
+                          <span
+                            className={cn(
+                              'line-clamp-2 font-semibold leading-snug',
+                              contractSelected ? 'text-white' : 'text-zinc-900'
+                            )}
+                          >
+                            {c.title}
+                          </span>
+                        </div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-0.5">
+                          {c.contractNumber ? (
+                            <span
+                              className={cn(
+                                'text-[9px] tabular-nums',
+                                contractSelected ? 'text-blue-100' : 'text-zinc-600'
+                              )}
+                            >
+                              #{c.contractNumber}
+                            </span>
+                          ) : null}
+                          <Badge
+                            variant={contractSelected ? 'outline' : statusVariant}
+                            className={cn(
+                              'h-3.5 px-1 text-[8px] font-medium',
+                              contractSelected && 'border-white/50 bg-white/15 text-white'
+                            )}
+                          >
+                            {statusLabel}
+                          </Badge>
+                          {c.endDate ? (
+                            <span
+                              className={cn(
+                                'text-[9px] tabular-nums',
+                                contractSelected ? 'text-blue-100' : 'text-zinc-500'
+                              )}
+                            >
+                              {formatDate(c.endDate)}
+                            </span>
+                          ) : null}
+                        </div>
+                        {showProject ? (
+                          <p
+                            className={cn(
+                              'mt-0.5 line-clamp-1 text-[9px]',
+                              contractSelected ? 'text-blue-100/90' : 'text-zinc-500'
+                            )}
+                          >
+                            {c.projectName}
+                          </p>
+                        ) : null}
+                      </button>
+                    )
+                  })
+                )}
+              </div>
+            </div>
           </div>
-        ) : null}
+        </details>
       </section>
 
-      <details className="group rounded-2xl border border-dashed border-zinc-200/90 bg-zinc-50/50 px-4 py-3 text-sm text-zinc-600 open:border-zinc-300 open:bg-white">
-        <summary className="cursor-pointer list-none font-medium text-zinc-700 outline-none marker:content-none [&::-webkit-details-marker]:hidden">
-          <span className="inline-flex items-center gap-2">
-            <span className="text-zinc-400 transition-transform group-open:rotate-90">▸</span>
-            Aan de slag (projecten &amp; documenten)
-          </span>
-        </summary>
-        <ol className="mt-3 list-decimal space-y-2 pl-5 text-xs leading-relaxed text-zinc-600 sm:text-sm">
-          <li>
-            Maak een project onder <Link href="/projects" className="font-medium text-zinc-800 underline-offset-2 hover:underline">Projecten</Link> (het project &quot;Algemeen&quot; bestaat al).
-          </li>
-          <li>
-            Voeg contracten toe met PDF- of DOCX-documenten zodat de agent de tekst kan gebruiken.
-          </li>
-          <li>Kies het zoekbereik hierboven; bronnen en beperkingen staan bij elk antwoord.</li>
-        </ol>
-      </details>
-
+      {/* Vraag (groot) naast antwoord */}
+      <div className="mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-hidden lg:flex-row lg:items-stretch lg:gap-6">
+        <div
+          className={cn(
+            'flex min-h-0 w-full min-w-0 flex-col gap-3',
+            'lg:h-full lg:min-h-0 lg:max-w-[min(100%,520px)] lg:flex-1 lg:shrink-0 lg:overflow-y-auto lg:overscroll-contain xl:max-w-[560px]'
+          )}
+          aria-label="Uw vraag"
+        >
           <form
             onSubmit={handleSubmit}
-            className="space-y-3 rounded-2xl border border-zinc-200/90 bg-white p-4 shadow-[0_1px_0_rgba(0,0,0,0.04)] sm:p-5"
+            className="flex min-h-0 flex-1 flex-col rounded-2xl border border-zinc-200/90 bg-white p-4 shadow-sm ring-1 ring-zinc-100/80 sm:p-5"
           >
-            <p className="text-xs font-medium uppercase tracking-wider text-zinc-400">Uw vraag</p>
-            <details className="rounded-xl border border-zinc-100 bg-zinc-50/80 px-3 py-2 text-left">
+            <p className="shrink-0 text-xs font-medium uppercase tracking-wider text-zinc-400">Uw vraag</p>
+            <details className="mt-2 shrink-0 rounded-xl border border-zinc-100 bg-zinc-50/80 px-3 py-2 text-left">
               <summary className="cursor-pointer select-none text-xs font-medium text-zinc-500 outline-none [&::-webkit-details-marker]:hidden">
                 <span className="inline-flex items-center gap-1.5">
                   <Link2 className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
@@ -778,64 +883,93 @@ export default function ContractAskClient() {
               />
             </details>
 
-            <div className="flex items-end gap-2 rounded-2xl border border-zinc-200/90 bg-white px-2 py-2 shadow-[0_2px_12px_rgba(0,0,0,0.04)] focus-within:border-zinc-300 focus-within:ring-2 focus-within:ring-zinc-200/80 sm:gap-3 sm:px-3 sm:py-2.5">
+            <div className="mt-3 flex min-h-0 flex-1 flex-col gap-2 rounded-2xl border border-zinc-200/90 bg-zinc-50/40 p-2 focus-within:border-zinc-300 focus-within:ring-2 focus-within:ring-zinc-200/80 sm:p-3">
               <Textarea
                 id="chat-input"
-                placeholder="Stel een vraag…"
+                placeholder="Stel uw vraag over de contracten…"
                 value={question}
                 onChange={(e) => setQuestion(e.target.value)}
                 onKeyDown={handleQuestionKeyDown}
-                rows={3}
+                rows={14}
                 disabled={loading}
-                className="max-h-[220px] min-h-[5.5rem] flex-1 resize-y border-0 bg-transparent px-1 py-2 text-[15px] leading-relaxed text-zinc-900 shadow-none placeholder:text-zinc-400 focus-visible:ring-0 focus-visible:ring-offset-0"
+                className="min-h-[min(42vh,22rem)] w-full flex-1 resize-y border-0 bg-transparent px-2 py-2 text-[15px] leading-relaxed text-zinc-900 shadow-none placeholder:text-zinc-400 focus-visible:ring-0 focus-visible:ring-offset-0 lg:min-h-[min(52vh,28rem)]"
               />
-              <Button
-                type="submit"
-                size="icon"
-                disabled={!canSubmit}
-                className="h-10 w-10 shrink-0 rounded-xl sm:h-11 sm:w-11"
-                aria-label={loading ? 'Bezig…' : 'Verstuur vraag'}
-              >
-                {loading ? (
-                  <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
-                ) : (
-                  <Send className="h-5 w-5" aria-hidden />
-                )}
-              </Button>
+              <div className="flex shrink-0 items-center justify-between gap-2 border-t border-zinc-200/80 pt-2">
+                <p className="text-[11px] text-zinc-400">
+                  Enter verstuurt · Shift+Enter nieuwe regel
+                </p>
+                <Button
+                  type="submit"
+                  size="default"
+                  disabled={!canSubmit}
+                  className="rounded-xl gap-2"
+                  aria-label={loading ? 'Bezig…' : 'Verstuur vraag'}
+                >
+                  {loading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  ) : (
+                    <Send className="h-4 w-4" aria-hidden />
+                  )}
+                  Verstuur
+                </Button>
+              </div>
             </div>
-            <p className="text-center text-[11px] text-zinc-400">
-              Enter om te versturen · Shift+Enter voor nieuwe regel
-            </p>
-            {!loading &&
-            question.trim() &&
-            ((scopeMode === 'project' && !selectedScopeProjectId) ||
-              (scopeMode === 'single' && !selectedContractId)) ? (
-              <p className="text-center text-xs text-amber-800/90" role="status">
-                {scopeMode === 'project' && !selectedScopeProjectId ? (
-                  projects.length === 0 ? (
-                    <>
-                      Geen projecten beschikbaar. Maak eerst een project aan onder <Link href="/projects" className="underline">Projecten</Link>.
-                    </>
-                  ) : (
-                    <>Kies een project in de lijst &quot;Projecten &amp; contracten&quot;.</>
-                  )
-                ) : scopeMode === 'single' && !selectedContractId ? (
-                  contracts.length === 0 ? (
-                    <>
-                      Geen contracten gevonden. Voeg een contract toe onder{' '}
-                      <Link href="/contracts" className="underline">Contracten</Link>.
-                    </>
-                  ) : (
-                    <>Klik op een contract in de lijst hierboven (of kies eerst &quot;Project&quot; voor een hele map).</>
-                  )
-                ) : null}
+            {!loading && question.trim() && scopeMode === 'project' && !selectedScopeProjectId ? (
+              <p className="mt-2 text-center text-xs text-amber-800/90" role="status">
+                {projects.length === 0 ? (
+                  <>
+                    Geen projecten.{' '}
+                    <Link href="/projects" className="underline">
+                      Projecten
+                    </Link>
+                  </>
+                ) : (
+                  <>Open bronnen hierboven en kies &quot;Heel dit project&quot; of een contract.</>
+                )}
               </p>
             ) : null}
           </form>
-        </aside>
 
-        {/* Rechterkolom: alleen gesprek — min-h-0 nodig zodat flex-kind kan krimpen en overflow-y werkt */}
-        <div className="flex min-h-[min(52dvh,520px)] min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-zinc-50/90 shadow-[0_1px_0_rgba(0,0,0,0.04)] lg:min-h-0">
+          <details className="group shrink-0 rounded-2xl border border-dashed border-zinc-200/90 bg-zinc-50/50 px-4 py-3 text-sm text-zinc-600 open:border-zinc-300 open:bg-white">
+            <summary className="cursor-pointer list-none font-medium text-zinc-700 outline-none marker:content-none [&::-webkit-details-marker]:hidden">
+              <span className="inline-flex items-center gap-2">
+                <span className="text-zinc-400 transition-transform group-open:rotate-90">▸</span>
+                Aan de slag
+              </span>
+            </summary>
+            <ol className="mt-3 list-decimal space-y-2 pl-5 text-xs leading-relaxed text-zinc-600 sm:text-sm">
+              <li>
+                Vouw <span className="font-medium">Bronnen</span> open: filter project, kies één of meerdere contracten, of
+                &quot;Heel dit project&quot;. Zonder contractkeuze is de zoekslag breed.
+              </li>
+              <li>
+                Maak projecten aan onder{' '}
+                <Link href="/projects" className="font-medium text-zinc-800 underline-offset-2 hover:underline">
+                  Projecten
+                </Link>{' '}
+                en voeg PDF/DOCX toe bij{' '}
+                <Link href="/contracts" className="font-medium text-zinc-800 underline-offset-2 hover:underline">
+                  Contracten
+                </Link>
+                .
+              </li>
+            </ol>
+          </details>
+        </div>
+
+        <div className="flex min-h-[min(44dvh,440px)] min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-zinc-50/90 shadow-[0_1px_0_rgba(0,0,0,0.04)] lg:min-h-0">
+        <div className="shrink-0 border-b border-zinc-200/80 bg-white/90 px-3 py-2 sm:px-4">
+          <p className="text-[11px] text-zinc-500">
+            Bronnen wijzigen?{' '}
+            <button
+              type="button"
+              className="font-medium text-blue-700 underline-offset-2 hover:underline"
+              onClick={() => document.getElementById('contractagent-bronnen-hub')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            >
+              Naar boven
+            </button>
+          </p>
+        </div>
         {faqClusters.length > 0 ? (
           <div className="shrink-0 space-y-2 border-b border-zinc-200/80 bg-white/60 px-4 py-3 sm:px-5">
             <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">Vaak gevraagd</p>
@@ -881,8 +1015,8 @@ export default function ContractAskClient() {
               <div>
                 <p className="text-sm font-medium text-zinc-800">Waar kan ik u mee helpen?</p>
                 <p className="mt-1 max-w-sm text-sm leading-relaxed text-zinc-500">
-                  <span className="lg:hidden">Stel uw vraag in het veld hierboven. </span>
-                  <span className="hidden lg:inline">Stel uw vraag in het linkerpaneel. </span>
+                  <span className="lg:hidden">Typ uw vraag in het grote veld hierboven. </span>
+                  <span className="hidden lg:inline">Typ uw vraag in het veld links van dit antwoord. </span>
                   Antwoorden bevatten bronvermelding en kunnen vervolgsuggesties tonen.
                 </p>
               </div>
