@@ -1,4 +1,3 @@
-import { getOrCreateUser } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { notificationRules, contracts } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
@@ -7,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import Link from 'next/link'
 import { canManageOrgSettings } from '@/lib/permissions'
+import { requireOrgModule } from '@/lib/org-module-access'
 
 const TRIGGER_LABELS: Record<string, string> = {
   days_before_end: 'Dagen voor einddatum',
@@ -16,8 +16,8 @@ const TRIGGER_LABELS: Record<string, string> = {
 }
 
 export default async function NotificationsSettingsPage() {
-  const user = await getOrCreateUser()
-  if (!user || !canManageOrgSettings(user.role)) redirect('/dashboard')
+  const user = await requireOrgModule('settingsNotifications')
+  if (!canManageOrgSettings(user.role)) redirect('/dashboard')
 
   const rules = await db.query.notificationRules.findMany({
     with: { contractId: true } as any,

@@ -1,4 +1,3 @@
-import { getOrCreateUser } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { customFields } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
@@ -9,10 +8,11 @@ import { formatDate } from '@/lib/utils'
 import { CustomFieldForm } from './custom-field-form'
 import { DeleteFieldButton } from './delete-field-button'
 import { canManageOrgSettings } from '@/lib/permissions'
+import { requireOrgModule } from '@/lib/org-module-access'
 
 export default async function CustomFieldsPage() {
-  const user = await getOrCreateUser()
-  if (!user || !canManageOrgSettings(user.role)) redirect('/dashboard')
+  const user = await requireOrgModule('settingsCustomFields')
+  if (!canManageOrgSettings(user.role)) redirect('/dashboard')
 
   const fields = await db.query.customFields.findMany({ where: eq(customFields.orgId, user.orgId) })
 

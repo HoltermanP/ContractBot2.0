@@ -1,4 +1,5 @@
 import type { UserRole } from './auth'
+import { getEffectiveModuleVisibility } from './org-modules'
 
 /** Platform-superuser: alle orgs, alle rechten (tenant-beheer). */
 export function isSuperAdmin(role: UserRole): boolean {
@@ -80,14 +81,25 @@ export function canManageSupplierWrite(role: UserRole): boolean {
   return canMutateContractData(role)
 }
 
-/** Training & e-learning: alleen voor org-admin (navigatie, API, cursussen). */
-export function canAccessTrainingModule(role: UserRole): boolean {
+/** Training-sectie (nav, lijst, gepubliceerde cursus) volgens org-instellingen en per-rol matrix. */
+export function canViewTrainingSection(settingsJson: unknown, role: UserRole): boolean {
+  return getEffectiveModuleVisibility(settingsJson, role).training
+}
+
+/** Cursussen aanmaken, bewerken, genereren, concepten: beheerder / super-admin. */
+export function canManageTrainingCourses(role: UserRole): boolean {
   return isOrgAdminRole(role)
 }
 
-/** Cursusdata ophalen (incl. concept): alleen admin. */
-export function canViewTrainingCourse(role: UserRole, _courseStatus: 'draft' | 'published'): boolean {
-  return canAccessTrainingModule(role)
+/** Cursus openen: module aan + gepubliceerd voor iedereen met toegang; concept alleen beheerders. */
+export function canViewTrainingCourseContent(
+  settingsJson: unknown,
+  role: UserRole,
+  courseStatus: 'draft' | 'published'
+): boolean {
+  if (!canViewTrainingSection(settingsJson, role)) return false
+  if (courseStatus === 'published') return true
+  return isOrgAdminRole(role)
 }
 
 /** Alleen super-admin mag anderen tot super-admin promoveren. */

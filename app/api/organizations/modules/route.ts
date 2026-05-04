@@ -4,8 +4,10 @@ import { db, organizations } from '@/lib/db'
 import { eq } from 'drizzle-orm'
 import {
   DEFAULT_ORG_MODULE_VISIBILITY,
+  getModulesByRoleFromSettings,
   getOrgModuleVisibilityFromSettings,
-  mergeSettingsWithModuleVisibility,
+  mergeSettingsWithModulesPatch,
+  normalizeModulesByRole,
   normalizeOrgModuleVisibility,
 } from '@/lib/org-modules'
 import { canManageOrgSettings } from '@/lib/permissions'
@@ -22,6 +24,7 @@ export async function GET() {
 
     return NextResponse.json({
       modules: getOrgModuleVisibilityFromSettings(org.settingsJson),
+      modulesByRole: getModulesByRoleFromSettings(org.settingsJson),
       defaults: DEFAULT_ORG_MODULE_VISIBILITY,
     })
   } catch (err: unknown) {
@@ -46,14 +49,19 @@ export async function PATCH(req: NextRequest) {
     })
     if (!org) return NextResponse.json({ error: 'Organisatie niet gevonden' }, { status: 404 })
 
-    const nextSettings = mergeSettingsWithModuleVisibility(org.settingsJson, modules)
+    const modulesByRole =
+      body && typeof body === 'object' && 'modulesByRole' in body
+        ? normalizeModulesByRole(body.modulesByRole)
+        : getModulesByRoleFromSettings(org.settingsJson)
+
+    const nextSettings = mergeSettingsWithModulesPatch(org.settingsJson, { modules, modulesByRole })
 
     await db
       .update(organizations)
       .set({ settingsJson: nextSettings })
       .where(eq(organizations.id, org.id))
 
-    return NextResponse.json({ ok: true, modules })
+    return NextResponse.json({ ok: true, modules, modulesByRole })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Fout'
     return NextResponse.json({ error: message }, { status: 500 })

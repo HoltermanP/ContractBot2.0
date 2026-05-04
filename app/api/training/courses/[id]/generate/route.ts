@@ -8,7 +8,8 @@ import {
   trainingCourseDocuments,
 } from '@/lib/db'
 import { eq, and } from 'drizzle-orm'
-import { canAccessTrainingModule } from '@/lib/permissions'
+import { canManageTrainingCourses, canViewTrainingSection } from '@/lib/permissions'
+import { getOrgSettingsJsonForUser } from '@/lib/org-module-access'
 import { resolveTrainingSources, trimSourcesForModel } from '@/lib/training-sources'
 import { generateExtendedContractTraining } from '@/lib/training-ai'
 import { logAudit } from '@/lib/audit'
@@ -18,7 +19,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     const { id: courseId } = await params
     const user = await getOrCreateUser()
     if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
-    if (!canAccessTrainingModule(user.role)) {
+    const settingsJson = await getOrgSettingsJsonForUser(user.orgId)
+    if (!canViewTrainingSection(settingsJson, user.role) || !canManageTrainingCourses(user.role)) {
       return NextResponse.json({ error: 'Geen rechten' }, { status: 403 })
     }
 

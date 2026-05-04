@@ -2,14 +2,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getOrCreateUser } from '@/lib/auth'
 import { db, trainingCourses } from '@/lib/db'
 import { eq, desc } from 'drizzle-orm'
-import { canAccessTrainingModule } from '@/lib/permissions'
+import { canManageTrainingCourses, canViewTrainingSection } from '@/lib/permissions'
 import { logAudit } from '@/lib/audit'
+import { getOrgSettingsJsonForUser } from '@/lib/org-module-access'
 
 export async function GET() {
   try {
     const user = await getOrCreateUser()
     if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
-    if (!canAccessTrainingModule(user.role)) {
+    const settingsJson = await getOrgSettingsJsonForUser(user.orgId)
+    if (!canViewTrainingSection(settingsJson, user.role)) {
       return NextResponse.json({ error: 'Geen toegang' }, { status: 403 })
     }
 
@@ -43,7 +45,8 @@ export async function POST(req: NextRequest) {
   try {
     const user = await getOrCreateUser()
     if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
-    if (!canAccessTrainingModule(user.role)) {
+    const settingsJson = await getOrgSettingsJsonForUser(user.orgId)
+    if (!canViewTrainingSection(settingsJson, user.role) || !canManageTrainingCourses(user.role)) {
       return NextResponse.json({ error: 'Geen rechten om trainingen aan te maken' }, { status: 403 })
     }
 

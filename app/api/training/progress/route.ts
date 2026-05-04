@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getOrCreateUser } from '@/lib/auth'
 import { db, trainingModules, trainingCourses, trainingProgress } from '@/lib/db'
 import { eq, and } from 'drizzle-orm'
-import { canViewTrainingCourse } from '@/lib/permissions'
+import { canViewTrainingCourseContent } from '@/lib/permissions'
+import { getOrgSettingsJsonForUser } from '@/lib/org-module-access'
 
 export async function POST(req: NextRequest) {
   try {
     const user = await getOrCreateUser()
     if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
+    const settingsJson = await getOrgSettingsJsonForUser(user.orgId)
 
     const body = (await req.json()) as { moduleId?: string }
     if (!body.moduleId || typeof body.moduleId !== 'string') {
@@ -21,7 +23,7 @@ export async function POST(req: NextRequest) {
     if (!mod?.course || mod.course.orgId !== user.orgId) {
       return NextResponse.json({ error: 'Module niet gevonden' }, { status: 404 })
     }
-    if (!canViewTrainingCourse(user.role, mod.course.status)) {
+    if (!canViewTrainingCourseContent(settingsJson, user.role, mod.course.status)) {
       return NextResponse.json({ error: 'Geen toegang' }, { status: 403 })
     }
 

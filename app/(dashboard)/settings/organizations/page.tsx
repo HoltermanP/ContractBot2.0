@@ -1,5 +1,4 @@
-import { getOrCreateUser } from '@/lib/auth'
-import { redirect } from 'next/navigation'
+import { requireOrgModule } from '@/lib/org-module-access'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { CreateOrgForm } from './create-org-form'
 import { InviteMemberForm } from './invite-member-form'
@@ -7,8 +6,7 @@ import { canManageOrgSettings, canManageUsers } from '@/lib/permissions'
 import { ModulesVisibilityForm } from './modules-visibility-form'
 
 export default async function OrganizationsSettingsPage() {
-  const user = await getOrCreateUser()
-  if (!user) redirect('/sign-in')
+  const user = await requireOrgModule('settingsOrganizations')
 
   return (
     <div className="space-y-8 max-w-3xl">
@@ -73,7 +71,8 @@ export default async function OrganizationsSettingsPage() {
           <CardHeader>
             <CardTitle>Modulebeschikbaarheid</CardTitle>
             <CardDescription>
-              Beheer welke modules en pagina&apos;s beschikbaar zijn binnen de actieve organisatie.
+              Stel in welke modules en instellingen-pagina&apos;s organisatiebreed aan staan, en per gebruikersrol
+              zichtbaar zijn.
             </CardDescription>
           </CardHeader>
           <CardContent>

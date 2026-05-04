@@ -2,20 +2,26 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getOrCreateUser } from '@/lib/auth'
 import { db, trainingCourses, trainingModules, trainingCourseContracts, trainingCourseDocuments, trainingProgress } from '@/lib/db'
 import { eq, and, asc, inArray } from 'drizzle-orm'
-import { canAccessTrainingModule, canViewTrainingCourse } from '@/lib/permissions'
+import {
+  canManageTrainingCourses,
+  canViewTrainingCourseContent,
+  canViewTrainingSection,
+} from '@/lib/permissions'
 import { logAudit } from '@/lib/audit'
+import { getOrgSettingsJsonForUser } from '@/lib/org-module-access'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params
     const user = await getOrCreateUser()
     if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
+    const settingsJson = await getOrgSettingsJsonForUser(user.orgId)
 
     const course = await db.query.trainingCourses.findFirst({
       where: and(eq(trainingCourses.id, id), eq(trainingCourses.orgId, user.orgId)),
     })
     if (!course) return NextResponse.json({ error: 'Niet gevonden' }, { status: 404 })
-    if (!canViewTrainingCourse(user.role, course.status)) {
+    if (!canViewTrainingCourseContent(settingsJson, user.role, course.status)) {
       return NextResponse.json({ error: 'Geen toegang' }, { status: 403 })
     }
 
@@ -66,7 +72,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const { id } = await params
     const user = await getOrCreateUser()
     if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
-    if (!canAccessTrainingModule(user.role)) {
+    const settingsJson = await getOrgSettingsJsonForUser(user.orgId)
+    if (!canViewTrainingSection(settingsJson, user.role) || !canManageTrainingCourses(user.role)) {
       return NextResponse.json({ error: 'Geen rechten' }, { status: 403 })
     }
 
@@ -109,7 +116,8 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     const { id } = await params
     const user = await getOrCreateUser()
     if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
-    if (!canAccessTrainingModule(user.role)) {
+    const settingsJson = await getOrgSettingsJsonForUser(user.orgId)
+    if (!canViewTrainingSection(settingsJson, user.role) || !canManageTrainingCourses(user.role)) {
       return NextResponse.json({ error: 'Geen rechten' }, { status: 403 })
     }
 

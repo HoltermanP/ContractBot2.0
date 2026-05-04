@@ -5,8 +5,7 @@ import { getOrCreateUser, getSessionUser } from '@/lib/auth'
 import { db, organizations } from '@/lib/db'
 import { eq } from 'drizzle-orm'
 import { redirect } from 'next/navigation'
-import { getOrgModuleVisibilityFromSettings, type OrgModuleVisibility } from '@/lib/org-modules'
-import { isOrgAdminRole } from '@/lib/permissions'
+import { getEffectiveModuleVisibility, type OrgModuleVisibility } from '@/lib/org-modules'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   let user = await getSessionUser()
@@ -20,11 +19,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     where: eq(organizations.id, user.orgId),
     columns: { id: true, name: true, settingsJson: true },
   })
-  const baseVisibility = getOrgModuleVisibilityFromSettings(org?.settingsJson)
-  const moduleVisibility: OrgModuleVisibility = {
-    ...baseVisibility,
-    training: baseVisibility.training && isOrgAdminRole(user.role),
-  }
+  const moduleVisibility: OrgModuleVisibility = getEffectiveModuleVisibility(org?.settingsJson, user.role)
 
   return (
     <div className="flex min-h-screen bg-gray-50">

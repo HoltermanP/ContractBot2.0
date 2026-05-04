@@ -1,7 +1,7 @@
 import { getOrCreateUser } from '@/lib/auth'
 import { db, trainingCourses } from '@/lib/db'
 import { desc, eq } from 'drizzle-orm'
-import { canAccessTrainingModule } from '@/lib/permissions'
+import { canManageTrainingCourses } from '@/lib/permissions'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -34,7 +34,7 @@ export default async function TrainingListPage() {
             Genereer uitgebreide trainingen op basis van contracten en documenten, en optioneel een Gamma-presentatie.
           </p>
         </div>
-        {canAccessTrainingModule(user.role) && (
+        {canManageTrainingCourses(user.role) && (
           <Button asChild>
             <Link href="/training/new">
               <Plus className="h-4 w-4 mr-2" />
@@ -52,7 +52,7 @@ export default async function TrainingListPage() {
               Maak een training aan en koppel contracten of specifieke documenten (addenda).
             </CardDescription>
           </CardHeader>
-          {canAccessTrainingModule(user.role) && (
+          {canManageTrainingCourses(user.role) && (
             <CardContent>
               <Button asChild variant="outline">
                 <Link href="/training/new">Start met een nieuwe training</Link>

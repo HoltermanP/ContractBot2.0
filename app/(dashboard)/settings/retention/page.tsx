@@ -1,4 +1,3 @@
-import { getOrCreateUser } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { contracts } from '@/lib/db/schema'
 import { eq, and, isNotNull, lt } from 'drizzle-orm'
@@ -8,10 +7,11 @@ import { Badge } from '@/components/ui/badge'
 import { formatDate, daysUntil, getExpiryBadgeClass } from '@/lib/utils'
 import Link from 'next/link'
 import { canManageOrgSettings } from '@/lib/permissions'
+import { requireOrgModule } from '@/lib/org-module-access'
 
 export default async function RetentionPage() {
-  const user = await getOrCreateUser()
-  if (!user || !canManageOrgSettings(user.role)) redirect('/dashboard')
+  const user = await requireOrgModule('settingsRetention')
+  if (!canManageOrgSettings(user.role)) redirect('/dashboard')
 
   const contractsWithDestructionDate = await db.query.contracts.findMany({
     where: and(

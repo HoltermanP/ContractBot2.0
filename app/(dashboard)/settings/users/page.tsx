@@ -1,9 +1,9 @@
-import { getOrCreateUser } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { organizationMembers } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { redirect } from 'next/navigation'
 import { canManageUsers, canAssignSuperAdmin } from '@/lib/permissions'
+import { requireOrgModule } from '@/lib/org-module-access'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { formatDate, ROLE_LABELS } from '@/lib/utils'
@@ -11,8 +11,7 @@ import { UserRoleEditor } from './user-role-editor'
 import { InviteUserForm } from './invite-user-form'
 
 export default async function UsersPage() {
-  const user = await getOrCreateUser()
-  if (!user) redirect('/sign-in')
+  const user = await requireOrgModule('settingsUsers')
   if (!canManageUsers(user.role)) redirect('/dashboard')
   if (!user.orgId) redirect('/dashboard')
 

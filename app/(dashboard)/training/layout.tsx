@@ -1,10 +1,6 @@
-import { getOrCreateUser } from '@/lib/auth'
-import { canAccessTrainingModule } from '@/lib/permissions'
-import { redirect } from 'next/navigation'
+import { requireOrgModule } from '@/lib/org-module-access'
 
 export default async function TrainingSectionLayout({ children }: { children: React.ReactNode }) {
-  const user = await getOrCreateUser()
-  if (!user) redirect('/sign-in')
-  if (!canAccessTrainingModule(user.role)) redirect('/dashboard')
+  await requireOrgModule('training')
   return <>{children}</>
 }

@@ -38,12 +38,12 @@ const aiItems: ModuleNavItem[] = [
   { href: '/training', label: 'Training & e-learning', icon: GraduationCap, key: 'training' },
 ]
 
-const settingsItems = [
-  { href: '/settings/organizations', label: 'Organisaties', icon: Building2 },
-  { href: '/settings/users', label: 'Gebruikers', icon: Users },
-  { href: '/settings/notifications', label: 'Notificaties', icon: Bell },
-  { href: '/settings/custom-fields', label: 'Aangepaste velden', icon: Settings },
-  { href: '/settings/retention', label: 'Bewaartermijnen', icon: Settings },
+const settingsItems: Array<{ href: string; label: string; icon: LucideIcon; key: OrgModuleKey }> = [
+  { href: '/settings/organizations', label: 'Organisaties', icon: Building2, key: 'settingsOrganizations' },
+  { href: '/settings/users', label: 'Gebruikers', icon: Users, key: 'settingsUsers' },
+  { href: '/settings/notifications', label: 'Notificaties', icon: Bell, key: 'settingsNotifications' },
+  { href: '/settings/custom-fields', label: 'Aangepaste velden', icon: Settings, key: 'settingsCustomFields' },
+  { href: '/settings/retention', label: 'Bewaartermijnen', icon: Settings, key: 'settingsRetention' },
 ]
 
 export function Sidebar({ moduleVisibility }: { moduleVisibility: OrgModuleVisibility }) {
@@ -51,6 +51,7 @@ export function Sidebar({ moduleVisibility }: { moduleVisibility: OrgModuleVisib
   const visibleAgentItems = agentItems.filter((item) => moduleVisibility[item.key])
   const visibleNavItems = navItems.filter((item) => moduleVisibility[item.key])
   const visibleAiItems = aiItems.filter((item) => moduleVisibility[item.key])
+  const visibleSettingsItems = settingsItems.filter((item) => moduleVisibility[item.key])
   return (
     <aside className="fixed left-0 top-0 h-full w-64 bg-slate-900 text-white flex flex-col z-40">
       <div className="p-6 border-b border-slate-700">
@@ -132,22 +133,26 @@ export function Sidebar({ moduleVisibility }: { moduleVisibility: OrgModuleVisib
           </>
         )}
 
-        <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mt-6 mb-3">Instellingen</div>
-        {settingsItems.map(({ href, label, icon: Icon }) => (
-          <Link
-            key={href}
-            href={href}
-            className={cn(
-              'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
-              pathname.startsWith(href)
-                ? 'bg-blue-600 text-white'
-                : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-            )}
-          >
-            <Icon className="h-4 w-4 shrink-0" />
-            {label}
-          </Link>
-        ))}
+        {visibleSettingsItems.length > 0 && (
+          <>
+            <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mt-6 mb-3">Instellingen</div>
+            {visibleSettingsItems.map(({ href, label, icon: Icon }) => (
+              <Link
+                key={href}
+                href={href}
+                className={cn(
+                  'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
+                  pathname.startsWith(href)
+                    ? 'bg-blue-600 text-white'
+                    : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                )}
+              >
+                <Icon className="h-4 w-4 shrink-0" />
+                {label}
+              </Link>
+            ))}
+          </>
+        )}
       </nav>
 
       <div className="p-4 border-t border-slate-700 flex items-center gap-3">
