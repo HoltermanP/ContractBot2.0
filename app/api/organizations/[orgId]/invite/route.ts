@@ -26,6 +26,17 @@ function allowedInviteRoles(forUser: { role: UserRole }): UserRole[] {
   return base
 }
 
+function messageFromClerkError(err: unknown): string {
+  if (err && typeof err === 'object' && 'errors' in err) {
+    const e = err as { errors?: Array<{ message?: string; longMessage?: string }> }
+    const first = e.errors?.[0]
+    if (first?.longMessage) return first.longMessage
+    if (first?.message) return first.message
+  }
+  if (err instanceof Error && err.message && err.message !== 'Bad Request') return err.message
+  return 'Uitnodigen mislukt (Clerk). Controleer Clerk-dashboard: uitnodigingen aan, redirect-URL toegestaan.'
+}
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ orgId: string }> }) {
   try {
     const { orgId } = await params
@@ -42,11 +53,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ org
 
     const body = await req.json()
     const emailRaw = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
-    const role = body.role as UserRole
+    const roleRaw = typeof body.role === 'string' ? body.role.trim() : ''
+    const role = roleRaw as UserRole
 
     const allowed = allowedInviteRoles(user)
-    if (!emailRaw || !allowed.includes(role)) {
-      return NextResponse.json({ error: 'Geldig e-mailadres en rol zijn verplicht' }, { status: 400 })
+    if (!emailRaw) {
+      return NextResponse.json({ error: 'Vul een geldig e-mailadres in' }, { status: 400 })
+    }
+    if (!roleRaw || !allowed.includes(role as UserRole)) {
+      return NextResponse.json({ error: 'De gekozen rol is niet geldig of niet toegestaan voor uw account' }, { status: 400 })
     }
     if (role === 'super_admin' && !canAssignSuperAdmin(user.role)) {
       return NextResponse.json({ error: 'Alleen super-admin kan deze rol toekennen' }, { status: 403 })
@@ -93,7 +108,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ org
     try {
       await client.invitations.createInvitation({
         emailAddress: emailRaw,
-        redirectUrl: `${baseUrl}/dashboard`,
+        /** Naar sign-up zodat Clerk de uitnodiging/token op jullie domein kan afhandelen; daarna door naar dashboard (fallback op SignUp). */
+        redirectUrl: `${baseUrl}/sign-up`,
+        /** Anders faalt Clerk met o.a. "Bad Request" bij tweede uitnodiging of openstaande invite. */
+        ignoreExisting: true,
         publicMetadata: {
           role,
           invited_org_id: orgId,
@@ -102,8 +120,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ org
     } catch (invErr: unknown) {
       const list = await client.users.getUserList({ emailAddress: [emailRaw] })
       if (list.data.length === 0) {
-        const msg = invErr instanceof Error ? invErr.message : 'Uitnodigen mislukt'
-        return NextResponse.json({ error: msg }, { status: 400 })
+        return NextResponse.json({ error: messageFromClerkError(invErr) }, { status: 400 })
       }
 
       const cu = list.data[0]

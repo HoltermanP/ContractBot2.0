@@ -67,8 +67,9 @@ export function InviteUserForm({
       <div>
         <h2 className="text-sm font-semibold text-zinc-900">Gebruiker uitnodigen</h2>
         <p className="mt-1 text-xs text-muted-foreground">
-          Nieuwe gebruikers ontvangen een uitnodiging via Clerk. Bestaande gebruikers worden direct aan uw organisatie
-          gekoppeld met de gekozen rol.
+          Nieuwe gebruikers ontvangen een e-mail en voltooien de activatie op de inlog-pagina van de app (geen
+          zelfregistratie zonder uitnodiging). Bestaande gebruikers worden direct aan uw organisatie gekoppeld met de
+          gekozen rol.
         </p>
       </div>
       <div className="space-y-1">
