@@ -8,11 +8,13 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { formatDate, ROLE_LABELS } from '@/lib/utils'
 import { UserRoleEditor } from './user-role-editor'
+import { InviteUserForm } from './invite-user-form'
 
 export default async function UsersPage() {
   const user = await getOrCreateUser()
   if (!user) redirect('/sign-in')
   if (!canManageUsers(user.role)) redirect('/dashboard')
+  if (!user.orgId) redirect('/dashboard')
 
   const allowSuperAdminInUi = canAssignSuperAdmin(user.role)
 
@@ -31,6 +33,8 @@ export default async function UsersPage() {
         <h1 className="text-2xl font-bold text-gray-900">Gebruikersbeheer</h1>
         <p className="text-muted-foreground">{allUsers.length} gebruikers in uw organisatie</p>
       </div>
+
+      <InviteUserForm orgId={user.orgId} canAssignSuperAdmin={allowSuperAdminInUi} />
 
       <Card>
         <CardContent className="pt-4">

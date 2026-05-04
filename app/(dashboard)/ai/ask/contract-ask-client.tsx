@@ -14,7 +14,7 @@ import {
   Building2,
   FileText,
   Send,
-  MessageSquare,
+  HelpCircle,
   ChevronDown,
 } from 'lucide-react'
 import { cn, formatDate, STATUS_LABELS } from '@/lib/utils'
@@ -23,6 +23,8 @@ import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import DOMPurify from 'dompurify'
 import ReactMarkdown from 'react-markdown'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { normalizeModelHtmlAnswer } from '@/lib/model-html-output'
 
 type ContractRow = {
   id: string
@@ -94,6 +96,8 @@ export default function ContractAskClient() {
   const [bronnenDetailsOpen, setBronnenDetailsOpen] = useState(true)
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
   const scrollStreamRaf = useRef<number | null>(null)
+  const streamFlushRaf = useRef<number | null>(null)
+  const pendingStreamUpdate = useRef<{ messageId: string; content: string } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -161,10 +165,19 @@ export default function ContractAskClient() {
 
   const projectFilterOptions = useMemo(() => {
     const knownIds = new Set(projects.map((p) => p.id))
+    const countByProjectId = new Map<string, number>()
+    let unassignedCount = 0
+    for (const c of contracts) {
+      if (!c.projectId) {
+        unassignedCount += 1
+        continue
+      }
+      countByProjectId.set(c.projectId, (countByProjectId.get(c.projectId) ?? 0) + 1)
+    }
     const opts: { id: string; label: string; count: number }[] = projects.map((p) => ({
       id: p.id,
       label: p.name,
-      count: contracts.filter((c) => c.projectId === p.id).length,
+      count: countByProjectId.get(p.id) ?? 0,
     }))
     const orphanIds = new Set<string>()
     for (const c of contracts) {
@@ -176,7 +189,6 @@ export default function ContractAskClient() {
       opts.push({ id: pid, label: name, count: list.length })
     }
     opts.sort((a, b) => a.label.localeCompare(b.label, 'nl', { sensitivity: 'base' }))
-    const unassignedCount = contracts.filter((c) => !c.projectId).length
     return { opts, unassignedCount }
   }, [projects, contracts])
 
@@ -262,6 +274,39 @@ export default function ContractAskClient() {
       if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'auto' })
     })
   }
+
+  function flushPendingStreamUpdate() {
+    const pending = pendingStreamUpdate.current
+    if (!pending) return
+    pendingStreamUpdate.current = null
+    setChatMessages((prev) =>
+      prev.map((m) => (m.id === pending.messageId ? { ...m, content: pending.content } : m))
+    )
+    queueScrollDuringStream()
+  }
+
+  function scheduleStreamUpdate(messageId: string, content: string) {
+    pendingStreamUpdate.current = { messageId, content }
+    if (streamFlushRaf.current != null) return
+    streamFlushRaf.current = requestAnimationFrame(() => {
+      streamFlushRaf.current = null
+      flushPendingStreamUpdate()
+    })
+  }
+
+  useEffect(() => {
+    return () => {
+      if (scrollStreamRaf.current != null) {
+        cancelAnimationFrame(scrollStreamRaf.current)
+        scrollStreamRaf.current = null
+      }
+      if (streamFlushRaf.current != null) {
+        cancelAnimationFrame(streamFlushRaf.current)
+        streamFlushRaf.current = null
+      }
+      pendingStreamUpdate.current = null
+    }
+  }, [])
 
   /** Bij nieuwe berichten (niet bij elke stream-chunk). */
   useLayoutEffect(() => {
@@ -389,13 +434,11 @@ export default function ContractAskClient() {
           }
           if (evt.type === 'delta' && typeof evt.text === 'string') {
             streamed += evt.text
-            setChatMessages((prev) =>
-              prev.map((m) => (m.id === assistantMessageId ? { ...m, content: streamed } : m))
-            )
-            queueScrollDuringStream()
+            scheduleStreamUpdate(assistantMessageId, streamed)
           } else if (evt.type === 'error') {
             streamError = typeof evt.error === 'string' ? evt.error : 'Er ging iets mis'
           } else if (evt.type === 'done') {
+            flushPendingStreamUpdate()
             completed = true
             const { type: _t, ...rest } = evt as { type: string } & AskResponse
             applyAssistantAnswer(assistantMessageId, rest as AskResponse)
@@ -477,17 +520,18 @@ export default function ContractAskClient() {
 
   /** Ruwe HTML-stream of opgeslagen HTML-antwoorden herkennen (legacy markdown blijft mogelijk). */
   function contentLooksLikeHtml(content: string) {
-    const t = content.trimStart()
+    const t = normalizeModelHtmlAnswer(content).trimStart()
     if (!t.startsWith('<')) return false
     return /^<\/?[a-z][a-z0-9]*\b/i.test(t)
   }
 
   function stripHtmlToPlainText(html: string) {
+    const normalized = normalizeModelHtmlAnswer(html)
     if (typeof document === 'undefined') {
-      return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+      return normalized.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
     }
     const d = document.createElement('div')
-    d.innerHTML = sanitizeAssistantHtml(html)
+    d.innerHTML = sanitizeAssistantHtml(normalized)
     return (d.textContent ?? d.innerText ?? '').replace(/\s+/g, ' ').trim()
   }
 
@@ -554,43 +598,17 @@ export default function ContractAskClient() {
     question.trim().length > 0 &&
     !(scopeMode === 'project' && !selectedScopeProjectId)
 
-  function handleQuestionKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.nativeEvent.isComposing) return
-    if (e.key !== 'Enter' || e.shiftKey) return
-    // Enter = versturen (geen nieuwe regel); Shift+Enter = standaard gedrag (nieuwe regel).
-    e.preventDefault()
-    if (!canSubmit) return
-    void submitQuestion(question)
-  }
-
   return (
     <div
       className={cn(
-        'mx-auto flex w-full max-w-[1400px] flex-col pb-6',
+        'mx-auto flex w-full max-w-[1400px] flex-col pb-3',
         /* Op desktop: vaste hoogte zodat alleen het gesprek scrollt (geen dubbele page-scroll + flex-1 groeit niet eindeloos). */
-        'lg:min-h-0 lg:h-[calc(100dvh-9rem)] lg:overflow-hidden'
+        'lg:min-h-0 lg:h-[calc(100dvh-8.25rem)] lg:overflow-hidden'
       )}
     >
-      {/* Compacte kop — vergelijkbaar met een chat-product */}
-      <header className="flex shrink-0 flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight text-zinc-900 sm:text-2xl">Contractagent</h1>
-          <p className="mt-0.5 max-w-xl text-sm text-zinc-500">
-            Vink contracten aan voor precies die dossiers (meerdere mogelijk, tot {MAX_SELECTED_CONTRACTS}). Kies een
-            projectrij voor zoeken binnen dat project, of <span className="font-medium text-zinc-600">Alle</span> voor
-            de hele organisatie. U kunt bronnen tussendoor aanpassen: elk nieuw bericht gebruikt de actuele keuze.
-          </p>
-        </div>
-        <div className="mt-2 flex items-center gap-2 text-xs text-zinc-400 sm:mt-0">
-          <MessageSquare className="h-3.5 w-3.5" aria-hidden />
-          <span className="hidden sm:inline">Eén doorlopend gesprek — typ onderaan, antwoorden verschijnen hierboven</span>
-          <span className="sm:hidden">Gesprek met invoer onderaan</span>
-        </div>
-      </header>
-
       <div
         className={cn(
-          'mt-3 flex min-h-0 flex-1 flex-col gap-3 overflow-hidden',
+          'mt-0 flex min-h-0 flex-1 flex-col gap-3 overflow-hidden',
           /* Grid + minmax(0,1fr): betrouwbare scroll in kinderen (flex min-height:auto breekt dit snel) */
           'lg:grid lg:grid-cols-[12.5rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] lg:items-stretch lg:gap-4'
         )}
@@ -607,24 +625,45 @@ export default function ContractAskClient() {
           aria-label="Bronnen kiezen"
         >
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-zinc-200/90 bg-white shadow-sm">
-            <button
-              type="button"
-              className="flex w-full shrink-0 cursor-pointer items-center gap-2 px-2.5 py-2 text-left"
-              onClick={() => setBronnenDetailsOpen((o) => !o)}
-              aria-expanded={bronnenDetailsOpen}
-            >
-              <ChevronDown
-                className={cn(
-                  'h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform',
-                  bronnenDetailsOpen && 'rotate-180'
-                )}
-                aria-hidden
-              />
-              <div className="min-w-0 flex-1">
-                <span className="text-[11px] font-semibold text-zinc-800">Bronnen</span>
-                <span className="mt-0.5 block truncate text-[10px] leading-snug text-zinc-500">{bronnenSummary}</span>
-              </div>
-            </button>
+            <div className="flex shrink-0 items-stretch gap-0.5 pr-1">
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 px-2.5 py-2 text-left"
+                onClick={() => setBronnenDetailsOpen((o) => !o)}
+                aria-expanded={bronnenDetailsOpen}
+              >
+                <ChevronDown
+                  className={cn(
+                    'h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform',
+                    bronnenDetailsOpen && 'rotate-180'
+                  )}
+                  aria-hidden
+                />
+                <div className="min-w-0 flex-1">
+                  <span className="text-[11px] font-semibold text-zinc-800">Bronnen</span>
+                  <span className="mt-0.5 block truncate text-[10px] leading-snug text-zinc-500">{bronnenSummary}</span>
+                </div>
+              </button>
+              <Tooltip>
+                <TooltipTrigger
+                  type="button"
+                  className="inline-flex h-8 w-7 shrink-0 items-center justify-center self-center rounded-md text-zinc-400 outline-none transition-colors hover:bg-zinc-100 hover:text-zinc-600 focus-visible:ring-2 focus-visible:ring-zinc-300"
+                  aria-label="Uitleg over bronnen en gesprek"
+                >
+                  <HelpCircle className="h-3.5 w-3.5" aria-hidden />
+                </TooltipTrigger>
+                <TooltipContent side="right" align="start" className="max-w-md space-y-2 text-left">
+                  <p className="text-[13px] leading-snug">
+                    Vink contracten aan voor precies die dossiers (meerdere mogelijk, tot {MAX_SELECTED_CONTRACTS}). Kies
+                    een projectrij voor zoeken binnen dat project, of <span className="font-medium">Alle</span> voor de
+                    hele organisatie. U kunt bronnen tussendoor aanpassen: elk nieuw bericht gebruikt de actuele keuze.
+                  </p>
+                  <p className="text-[13px] leading-snug">
+                    Eén doorlopend gesprek: typ onderaan, antwoorden verschijnen hierboven.
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </div>
             {bronnenDetailsOpen ? (
           <div
             className={cn(
@@ -954,7 +993,9 @@ export default function ContractAskClient() {
                     ) : contentLooksLikeHtml(message.content) ? (
                       <div
                         className={`${assistantContentClassName} [&_table]:overflow-hidden [&_table]:rounded-lg`}
-                        dangerouslySetInnerHTML={{ __html: sanitizeAssistantHtml(message.content) }}
+                        dangerouslySetInnerHTML={{
+                          __html: sanitizeAssistantHtml(normalizeModelHtmlAnswer(message.content)),
+                        }}
                       />
                     ) : (
                       <div className={assistantContentClassName}>
@@ -1149,7 +1190,7 @@ export default function ContractAskClient() {
 
         <form
           onSubmit={handleSubmit}
-          className="shrink-0 border-t border-zinc-200 bg-zinc-50/80 px-3 py-2 sm:px-4"
+          className="shrink-0 border-t border-zinc-200 bg-zinc-50/80 px-3 py-1.5 sm:px-4"
         >
           <div className="mx-auto max-w-3xl space-y-2">
             <p className="text-[10px] leading-snug text-zinc-500">
@@ -1175,36 +1216,34 @@ export default function ContractAskClient() {
                 disabled={loading}
               />
             </details>
-            <div className="flex flex-col gap-2 rounded-xl border border-zinc-200 bg-white p-2 shadow-[inset_0_1px_0_rgba(0,0,0,0.03)] focus-within:border-zinc-300 focus-within:ring-2 focus-within:ring-zinc-200/80 sm:p-2.5">
-              <Textarea
+            <div className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-white py-1.5 pl-3 pr-1.5 shadow-[inset_0_1px_0_rgba(0,0,0,0.03)] focus-within:border-zinc-300 focus-within:ring-2 focus-within:ring-zinc-200/80">
+              <Label htmlFor="chat-input" className="sr-only">
+                Vraag
+              </Label>
+              <Input
                 id="chat-input"
+                type="text"
                 placeholder="Stel uw vraag over de contracten…"
                 value={question}
                 onChange={(e) => setQuestion(e.target.value)}
-                onKeyDown={handleQuestionKeyDown}
-                rows={2}
                 disabled={loading}
-                className="max-h-28 min-h-[2.75rem] w-full resize-y border-0 bg-transparent px-2 py-1 text-[15px] leading-snug text-zinc-900 shadow-none placeholder:text-zinc-400 focus-visible:ring-0 focus-visible:ring-offset-0"
+                autoComplete="off"
+                className="h-10 min-w-0 flex-1 border-0 bg-transparent px-0 text-[15px] shadow-none placeholder:text-zinc-400 focus-visible:ring-0 focus-visible:ring-offset-0"
               />
-              <div className="flex shrink-0 items-center justify-between gap-2 border-t border-zinc-200/70 pt-2">
-                <p className="text-[10px] text-zinc-400 sm:text-[11px]">
-                  Enter verstuurt · Shift+Enter nieuwe regel
-                </p>
-                <Button
-                  type="submit"
-                  size="default"
-                  disabled={!canSubmit}
-                  className="rounded-xl gap-2"
-                  aria-label={loading ? 'Bezig…' : 'Verstuur vraag'}
-                >
-                  {loading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                  ) : (
-                    <Send className="h-4 w-4" aria-hidden />
-                  )}
-                  Verstuur
-                </Button>
-              </div>
+              <Button
+                type="submit"
+                size="default"
+                disabled={!canSubmit}
+                className="h-9 shrink-0 gap-2 rounded-lg px-3"
+                aria-label={loading ? 'Bezig…' : 'Verstuur vraag'}
+              >
+                {loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                ) : (
+                  <Send className="h-4 w-4" aria-hidden />
+                )}
+                Verstuur
+              </Button>
             </div>
             {!loading && question.trim() && scopeMode === 'project' && !selectedScopeProjectId ? (
               <p className="text-center text-[11px] text-amber-800/90" role="status">

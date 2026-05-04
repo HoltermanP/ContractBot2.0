@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { Inter, Geist } from 'next/font/google'
 import { ClerkProvider } from '@clerk/nextjs'
 import { Toaster } from '@/components/ui/toaster'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import './globals.css'
 import { cn } from "@/lib/utils";
 
@@ -19,8 +20,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <ClerkProvider>
       <html lang="nl" className={cn("font-sans", geist.variable)}>
         <body className={inter.className}>
-          {children}
-          <Toaster />
+          <TooltipProvider delay={300}>
+            {children}
+            <Toaster />
+          </TooltipProvider>
         </body>
       </html>
     </ClerkProvider>

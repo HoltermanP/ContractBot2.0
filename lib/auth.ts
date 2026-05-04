@@ -24,6 +24,19 @@ export interface AuthUser {
   email: string
 }
 
+/**
+ * Snelle request-scope lookup zonder provisioning/sync met Clerk profiel.
+ * Gebruik dit voor layout/navigatie om onnodige latency per page-transition te voorkomen.
+ */
+export async function getSessionUser(): Promise<AuthUser | null> {
+  const { userId } = await auth()
+  if (!userId) return null
+  const user = await db.query.users.findFirst({
+    where: eq(users.clerkId, userId),
+  })
+  return user as AuthUser | null
+}
+
 export async function getAuthUser(): Promise<AuthUser | null> {
   const { userId } = await auth()
   if (!userId) return null
@@ -76,6 +89,40 @@ async function getOrCreateSoloOrgForClerkUser(clerkUserId: string): Promise<stri
   return newOrg.id
 }
 
+/** Uitnodiging via Clerk: publicMetadata bevat doel-organisatie (zie invite API). */
+function invitedOrgFromPublicMetadata(
+  publicMetadata: Record<string, unknown> | null | undefined
+): { orgId: string; role: UserRole } | null {
+  if (!publicMetadata || typeof publicMetadata !== 'object') return null
+  const invitedOrgId =
+    typeof publicMetadata.invited_org_id === 'string' ? publicMetadata.invited_org_id : undefined
+  if (!invitedOrgId) return null
+  const rawRole = publicMetadata.role
+  const role: UserRole =
+    typeof rawRole === 'string' && APP_USER_ROLES.includes(rawRole as UserRole)
+      ? (rawRole as UserRole)
+      : 'reader'
+  return { orgId: invitedOrgId, role }
+}
+
+async function invitedOrgExists(orgId: string): Promise<boolean> {
+  const row = await db.query.organizations.findFirst({
+    where: eq(organizations.id, orgId),
+    columns: { id: true },
+  })
+  return Boolean(row)
+}
+
+/** Solo-org = placeholder met slug gelijk aan Clerk user id (niet de uitgenodigde org). */
+async function isSoloPlaceholderOrg(clerkUserId: string, orgId: string | null): Promise<boolean> {
+  if (!orgId) return false
+  const org = await db.query.organizations.findFirst({
+    where: eq(organizations.id, orgId),
+    columns: { slug: true },
+  })
+  return org?.slug === clerkUserId
+}
+
 export async function getOrCreateUser(): Promise<AuthUser | null> {
   const clerkUser = await currentUser()
   if (!clerkUser) return null
@@ -83,6 +130,9 @@ export async function getOrCreateUser(): Promise<AuthUser | null> {
   const existing = await db.query.users.findFirst({
     where: eq(users.clerkId, clerkUser.id),
   })
+
+  const pm = clerkUser.publicMetadata as Record<string, unknown> | null | undefined
+  const invited = invitedOrgFromPublicMetadata(pm)
 
   const rawRole = clerkUser.publicMetadata?.role
   const role: UserRole =
@@ -95,6 +145,19 @@ export async function getOrCreateUser(): Promise<AuthUser | null> {
   const email = clerkUser.emailAddresses[0]?.emailAddress ?? ''
 
   if (existing) {
+    if (invited && (await invitedOrgExists(invited.orgId))) {
+      const wronglySolo = await isSoloPlaceholderOrg(clerkUser.id, existing.orgId)
+      if (!existing.orgId || wronglySolo) {
+        const [updated] = await db
+          .update(users)
+          .set({ orgId: invited.orgId, role: invited.role, name, email })
+          .where(eq(users.id, existing.id))
+          .returning()
+        await ensureOrgMembership(updated.id, invited.orgId, invited.role)
+        return updated as AuthUser
+      }
+    }
+
     if (!existing.orgId) {
       const orgId = await getOrCreateSoloOrgForClerkUser(clerkUser.id)
       const [updated] = await db
@@ -107,6 +170,21 @@ export async function getOrCreateUser(): Promise<AuthUser | null> {
     }
     await ensureOrgMembership(existing.id, existing.orgId, existing.role as UserRole)
     return existing as AuthUser
+  }
+
+  if (invited && (await invitedOrgExists(invited.orgId))) {
+    const [newUser] = await db
+      .insert(users)
+      .values({
+        clerkId: clerkUser.id,
+        orgId: invited.orgId,
+        role: invited.role,
+        name,
+        email,
+      })
+      .returning()
+    await ensureOrgMembership(newUser.id, invited.orgId, invited.role)
+    return newUser as AuthUser
   }
 
   const orgId = await getOrCreateSoloOrgForClerkUser(clerkUser.id)

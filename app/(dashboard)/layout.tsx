@@ -1,8 +1,7 @@
-export const dynamic = 'force-dynamic'
 import { Sidebar } from '@/components/layout/sidebar'
 import { OrgSwitcher } from '@/components/layout/org-switcher'
 import { OrgRouteGuard } from '@/components/layout/org-route-guard'
-import { getOrCreateUser } from '@/lib/auth'
+import { getOrCreateUser, getSessionUser } from '@/lib/auth'
 import { db, organizations } from '@/lib/db'
 import { eq } from 'drizzle-orm'
 import { redirect } from 'next/navigation'
@@ -10,11 +9,16 @@ import { getOrgModuleVisibilityFromSettings, type OrgModuleVisibility } from '@/
 import { isOrgAdminRole } from '@/lib/permissions'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const user = await getOrCreateUser()
+  let user = await getSessionUser()
+  if (!user) {
+    // Alleen bij eerste binnenkomst/provisioning het zwaardere pad gebruiken.
+    user = await getOrCreateUser()
+  }
   if (!user) redirect('/sign-in')
 
   const org = await db.query.organizations.findFirst({
     where: eq(organizations.id, user.orgId),
+    columns: { id: true, name: true, settingsJson: true },
   })
   const baseVisibility = getOrgModuleVisibilityFromSettings(org?.settingsJson)
   const moduleVisibility: OrgModuleVisibility = {

@@ -22,6 +22,7 @@ import {
 import { fetchReferenceUrlAsText } from '@/lib/fetch-reference-url'
 import { persistContractAskTurn } from '@/lib/contract-ask-persist'
 import { enrichAskSources } from '@/lib/ask-source-links'
+import { normalizeModelHtmlAnswer } from '@/lib/model-html-output'
 
 const MAX_CONTEXT_CONTRACTS = 5
 const MAX_REFERENCE_URLS = 4
@@ -182,6 +183,7 @@ export async function POST(req: NextRequest) {
               answerHtml += chunk
               push({ type: 'delta', text: chunk })
             }
+            answerHtml = normalizeModelHtmlAnswer(answerHtml)
             const extracted = await extractContractAskStructuredFields(
               question,
               answerHtml,

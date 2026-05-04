@@ -1,18 +1,27 @@
 import OpenAI from 'openai'
 import Anthropic from '@anthropic-ai/sdk'
+import { normalizeModelHtmlAnswer } from '@/lib/model-html-output'
 
 export const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 export const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-const DEFAULT_CLAUDE_FAST_MODEL = 'claude-3-5-haiku-latest'
-const DEFAULT_CLAUDE_COMPLEX_MODEL = 'claude-3-5-sonnet-latest'
-const DEFAULT_CLAUDE_FALLBACKS = [
-  'claude-3-5-haiku-latest',
-  'claude-3-5-haiku-20241022',
-  'claude-3-haiku-20240307',
-  'claude-3-5-sonnet-latest',
-  'claude-3-5-sonnet-20241022',
-  'claude-3-5-sonnet-20240620',
+const DEFAULT_CLAUDE_CHEAP_MODELS = [
+  'claude-haiku-4-5-20251001',
+] as const
+
+const DEFAULT_CLAUDE_BALANCED_MODELS = [
+  'claude-sonnet-4-6',
+  'claude-sonnet-4-5-20250929',
+  'claude-sonnet-4-20250514',
+] as const
+
+const DEFAULT_CLAUDE_COMPLEX_MODELS = [
+  'claude-opus-4-7',
+  'claude-opus-4-6',
+  'claude-opus-4-5-20251101',
+  'claude-opus-4-1-20250805',
+  'claude-opus-4-20250514',
+  ...DEFAULT_CLAUDE_BALANCED_MODELS,
 ] as const
 
 function parseModelList(value?: string): string[] {
@@ -24,18 +33,32 @@ function parseModelList(value?: string): string[] {
 }
 
 export const CLAUDE_MODELS = {
-  classifier: process.env.ANTHROPIC_MODEL_CLASSIFIER ?? process.env.ANTHROPIC_MODEL_FAST ?? DEFAULT_CLAUDE_FAST_MODEL,
-  simpleAnswer: process.env.ANTHROPIC_MODEL_SIMPLE ?? process.env.ANTHROPIC_MODEL_FAST ?? DEFAULT_CLAUDE_FAST_MODEL,
-  complexAnswer: process.env.ANTHROPIC_MODEL_COMPLEX ?? DEFAULT_CLAUDE_COMPLEX_MODEL,
+  classifier:
+    process.env.ANTHROPIC_MODEL_CLASSIFIER ?? process.env.ANTHROPIC_MODEL_FAST ?? DEFAULT_CLAUDE_CHEAP_MODELS[0],
+  simpleAnswer:
+    process.env.ANTHROPIC_MODEL_SIMPLE ?? process.env.ANTHROPIC_MODEL_FAST ?? DEFAULT_CLAUDE_CHEAP_MODELS[0],
+  balancedAnswer: process.env.ANTHROPIC_MODEL_BALANCED ?? DEFAULT_CLAUDE_BALANCED_MODELS[0],
+  complexAnswer: process.env.ANTHROPIC_MODEL_COMPLEX ?? DEFAULT_CLAUDE_COMPLEX_MODELS[0],
   fallbacks: [
     ...parseModelList(process.env.ANTHROPIC_MODEL_FALLBACKS),
-    ...DEFAULT_CLAUDE_FALLBACKS,
+    ...DEFAULT_CLAUDE_CHEAP_MODELS,
+    ...DEFAULT_CLAUDE_BALANCED_MODELS,
+    ...DEFAULT_CLAUDE_COMPLEX_MODELS,
   ],
 } as const
 
 let cachedAnthropicModels: string[] | null = null
 
-async function getAvailableAnthropicModels(): Promise<string[]> {
+async function getAvailableAnthropicModels(options?: { force?: boolean }): Promise<string[]> {
+  /**
+   * In serverless productie kan een extra models.list-call de time-to-first-token verhogen.
+   * Daarom staat runtime model-discovery standaard uit en alleen expliciet aan via env.
+   */
+  const force = options?.force === true
+  if (!force && process.env.ANTHROPIC_DISCOVER_MODELS !== 'true') {
+    cachedAnthropicModels = []
+    return []
+  }
   if (cachedAnthropicModels) return cachedAnthropicModels
   try {
     const page = await anthropic.models.list({ limit: 100 })
@@ -130,6 +153,33 @@ export async function createClaudeJsonCompletion<T>({
     } catch (err) {
       lastErr = err
       if (!isModelNotFoundError(err)) throw err
+    }
+  }
+
+  /**
+   * Als alle geconfigureerde IDs niet bestaan, doe één live discovery-retry.
+   * Zo houden we standaard latency laag, maar herstellen we automatisch van verouderde modelnamen.
+   */
+  if (isModelNotFoundError(lastErr)) {
+    const discovered = await getAvailableAnthropicModels({ force: true })
+    if (discovered.length > 0) {
+      const retryCandidates = orderAvailableModelsByIntent(discovered, model)
+      for (const currentModel of retryCandidates) {
+        try {
+          const response = await anthropic.messages.create({
+            model: currentModel,
+            max_tokens: maxTokens,
+            system,
+            messages: [{ role: 'user', content: user }],
+          })
+          const content = extractTextContentFromAnthropic(response.content)
+          if (!content) throw new Error('Geen respons van Claude')
+          return parseJsonFromModelText(content) as T
+        } catch (err) {
+          lastErr = err
+          if (!isModelNotFoundError(err)) throw err
+        }
+      }
     }
   }
 
@@ -229,7 +279,7 @@ export interface ContractQuestionAnswer {
   followUpQuestions: string[]
 }
 
-type QaComplexity = 'simple' | 'complex'
+type QaComplexity = 'simple' | 'medium' | 'complex'
 
 export function sanitizeFollowUpQuestions(questions: unknown, originalQuestion: string): string[] {
   if (!Array.isArray(questions)) return []
@@ -249,6 +299,7 @@ export function sanitizeFollowUpQuestions(questions: unknown, originalQuestion: 
 const QA_ROUTING_MODELS = {
   classifier: CLAUDE_MODELS.classifier,
   simpleAnswer: CLAUDE_MODELS.simpleAnswer,
+  balancedAnswer: CLAUDE_MODELS.balancedAnswer,
   complexAnswer: CLAUDE_MODELS.complexAnswer,
 } as const
 
@@ -274,7 +325,8 @@ function estimateQuestionComplexityHeuristically(question: string, sourceCount: 
     'motivering',
   ]
   const hasComplexSignal = complexSignals.some((signal) => q.includes(signal))
-  if (question.length > 280 || sourceCount >= 5 || hasComplexSignal) return 'complex'
+  if (question.length > 420 || sourceCount >= 6) return 'complex'
+  if (question.length > 240 || sourceCount >= 4 || hasComplexSignal) return 'medium'
   return 'simple'
 }
 
@@ -309,22 +361,33 @@ async function determineQuestionComplexity(
     return 'simple'
   }
 
+  /**
+   * Extra LLM-classifier is opt-in; standaard heuristiek voor lagere latency in productie.
+   */
+  if (process.env.ANTHROPIC_ENABLE_COMPLEXITY_CLASSIFIER !== 'true') {
+    return heuristicComplexity
+  }
+
   try {
     const parsed = await createClaudeJsonCompletion<{ complexity?: QaComplexity }>({
       model: QA_ROUTING_MODELS.classifier,
       system: `Classificeer de vraagcomplexiteit voor contract-QA routing.
 Geef ALLEEN JSON terug:
 {
-  "complexity": "simple" | "complex"
+  "complexity": "simple" | "medium" | "complex"
 }
-Kies "complex" bij meerdere bronnen, interpretatie, tegenstrijdigheden, risico-inschatting, juridische nuance, of lange/open vragen.
+Kies "complex" bij meerdere bronnen met weging/tegenstrijdigheden, strategisch advies, juridische nuance of brede/open analyse.
+Kies "medium" bij uitleg/samenvatting met enkele nuances of 2-4 relevante bronnen.
 Kies "simple" bij feitelijke opzoekvragen met direct antwoord in 1-2 bronnen.`,
       user: `Organisatie: org_${orgId}
 Vraag: ${question}
 Bronnen: totaal=${contextBlocks.length}, hoofdcontract=${sourceKinds.contract}, contractstukken=${sourceKinds.contractstuk}, addenda=${sourceKinds.addendum}, urls=${sourceKinds.url}, chars=${totalChars}
 Heuristische voorinschatting: ${heuristicComplexity}`,
     })
-    return parsed.complexity === 'complex' ? 'complex' : 'simple'
+    if (parsed.complexity === 'complex' || parsed.complexity === 'medium' || parsed.complexity === 'simple') {
+      return parsed.complexity
+    }
+    return heuristicComplexity
   } catch {
     return heuristicComplexity
   }
@@ -395,7 +458,7 @@ Regels:
 - Verwijs in de lopende tekst concreet naar de bron (titel of bestandsnaam).
 - Geen feiten verzinnen; als de bronnen iets niet zeggen, zeg dat eerlijk.
 - Als de vraag begint met een SCOPE (strikt)-blok: de gebruiker heeft een expliciete contractkeuze gemaakt — gebruik dan alleen die dossiers, nooit impliciet andere contracten uit de organisatie.
-- Lever alleen de antwoord-HTML. Geen JSON, geen markdown, geen omhullend <pre> of codeblok rond het hele antwoord.`
+- Lever alleen de antwoord-HTML. Geen JSON, geen markdown, geen fenced codeblokken (triple backticks) om het antwoord, geen omhullend <pre> of codeblok rond het hele antwoord.`
 
 /**
  * Streamt het antwoord token-voor-token (Claude text deltas) voor live weergave in de UI.
@@ -407,13 +470,21 @@ export async function* streamAnswerContractQuestionHtml(
   options?: ContractQaCallOptions
 ): AsyncGenerator<string, void, undefined> {
   const complexity = await determineQuestionComplexity(question, contextBlocks, orgId)
-  const preferredModel = complexity === 'complex' ? QA_ROUTING_MODELS.complexAnswer : QA_ROUTING_MODELS.simpleAnswer
+  const preferredModel =
+    complexity === 'complex'
+      ? QA_ROUTING_MODELS.complexAnswer
+      : complexity === 'medium'
+        ? QA_ROUTING_MODELS.balancedAnswer
+        : QA_ROUTING_MODELS.simpleAnswer
   const joined = buildContractQaSourceSections(contextBlocks)
   const user = buildContractQaUserMessage(question, orgId, joined, options)
 
   const candidates = await buildStreamModelCandidates(preferredModel)
   let lastErr: unknown = null
-  for (const model of candidates) {
+  let discoveredRetried = false
+  let queue = [...candidates]
+  while (queue.length > 0) {
+    const model = queue.shift() as string
     try {
       const stream = anthropic.messages.stream({
         model,
@@ -434,6 +505,13 @@ export async function* streamAnswerContractQuestionHtml(
     } catch (err) {
       lastErr = err
       if (!isModelNotFoundError(err)) throw err
+      if (!discoveredRetried && queue.length === 0) {
+        discoveredRetried = true
+        const discovered = await getAvailableAnthropicModels({ force: true })
+        if (discovered.length > 0) {
+          queue = orderAvailableModelsByIntent(discovered, preferredModel)
+        }
+      }
     }
   }
   throw lastErr ?? new Error('Geen geldig Claude model beschikbaar')
@@ -485,7 +563,7 @@ Gebruik uitsluitend bronnen uit de meegeleverde lijst die het antwoord ondersteu
 Vraag: ${question}
 ${scopeNote}
 Antwoord (HTML):
-${answerHtml.slice(0, 24_000)}
+${normalizeModelHtmlAnswer(answerHtml).slice(0, 24_000)}
 
 Bronnen-metadata:
 ${JSON.stringify(summaries).slice(0, 20_000)}`,
@@ -518,7 +596,12 @@ export async function answerContractQuestion(
   options?: ContractQaCallOptions
 ): Promise<ContractQuestionAnswer> {
   const complexity = await determineQuestionComplexity(question, contextBlocks, orgId)
-  const answerModel = complexity === 'complex' ? QA_ROUTING_MODELS.complexAnswer : QA_ROUTING_MODELS.simpleAnswer
+  const answerModel =
+    complexity === 'complex'
+      ? QA_ROUTING_MODELS.complexAnswer
+      : complexity === 'medium'
+        ? QA_ROUTING_MODELS.balancedAnswer
+        : QA_ROUTING_MODELS.simpleAnswer
 
   const joined = buildContractQaSourceSections(contextBlocks)
   const userContent = buildContractQaUserMessage(question, orgId, joined, options)
@@ -527,7 +610,7 @@ export async function answerContractQuestion(
     model: answerModel,
     system: `Je bent een senior contractjurist en adviseur. Beantwoord de vraag van de gebruiker uitsluitend op basis van de meegeleverde bronnen.
 Regels:
-- Antwoord in het Nederlands als geldige HTML-fragmenten (geen <html>/<body>, geen script/style): gebruik <h2>, <h3>, <p>, lijsten, tabellen met <table>/<thead>/<tbody>/<tr>/<th>/<td>, <strong>, <em>, <blockquote> waar passend.
+- Antwoord in het Nederlands als geldige HTML-fragmenten (geen <html>/<body>, geen script/style): gebruik <h2>, <h3>, <p>, lijsten, tabellen met <table>/<thead>/<tbody>/<tr>/<th>/<td>, <strong>, <em>, <blockquote> waar passend. Geen markdown code fences rond de HTML.
 - **Volgorde en voorrang:** eerst hoofdcontract(en), dan **extra contractstukken** (bijlagen zonder wijzigingskarakter), daarna **addenda**. Addenda gaan voor op hoofdcontract en extra contractstukken waar ze afwijken. Tussen addenda wint **het laatst in deze lijst genoemde addendum** (nieuwste) bij tegenstrijdigheid met oudere addenda.
 - Citeer concreet: verwijs naar welke bron (contracttitel, bestandsnaam addendum, of URL-host) en parafraseer of kort citeer waar relevant.
 - Als de bronnen de vraag niet volledig beantwoorden, zeg dat expliciet en wat er wél in de bronnen staat.
@@ -535,7 +618,7 @@ Regels:
 - Als de gebruikersvraag begint met SCOPE (strikt): er is een expliciete contractkeuze — gebruik alleen die dossiers, geen kennis uit andere contracten van de organisatie.
 - Antwoord ALLEEN als JSON:
 {
-  "answer": string (geldige HTML-fragmenten, geen markdown),
+  "answer": string (geldige HTML-fragmenten, geen markdown, geen fenced codeblokken om de HTML),
   "sources": [
     {
       "type": "contract"|"contractstuk"|"addendum"|"url",
@@ -551,6 +634,7 @@ Regels:
   })
   return {
     ...result,
+    answer: normalizeModelHtmlAnswer(result.answer ?? ''),
     followUpQuestions: sanitizeFollowUpQuestions(result.followUpQuestions, question),
   }
 }

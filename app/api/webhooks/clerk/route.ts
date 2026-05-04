@@ -1,35 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { users, organizations } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { verifyWebhook } from '@clerk/backend/webhooks'
+import { syncClerkUserJsonToDatabase } from '@/lib/clerk-user-sync'
+import type { UserJSON } from '@clerk/backend'
+
+export const runtime = 'nodejs'
 
 export async function POST(req: NextRequest) {
   try {
-    const payload = await req.json()
-    const { type, data } = payload
+    const evt = await verifyWebhook(req)
 
-    if (type === 'user.created' || type === 'user.updated') {
-      const clerkUser = data
-      const existing = await db.query.users.findFirst({ where: eq(users.clerkId, clerkUser.id) })
+    if (evt.type === 'user.created' || evt.type === 'user.updated') {
+      await syncClerkUserJsonToDatabase(evt.data as UserJSON)
+    }
 
-      const name = (`${clerkUser.first_name ?? ''} ${clerkUser.last_name ?? ''}`.trim()) || (clerkUser.email_addresses?.[0]?.email_address ?? 'Gebruiker')
-      const email = clerkUser.email_addresses?.[0]?.email_address ?? ''
-
-      if (existing) {
-        await db.update(users).set({ name, email }).where(eq(users.clerkId, clerkUser.id))
-      } else {
-        await db.insert(users).values({
-          clerkId: clerkUser.id,
-          orgId: null,
-          role: (clerkUser.public_metadata?.role as any) ?? 'reader',
-          name,
-          email,
-        })
+    if (evt.type === 'session.created') {
+      const data = evt.data as { user?: UserJSON | null }
+      if (data.user) {
+        await syncClerkUserJsonToDatabase(data.user)
       }
     }
 
     return NextResponse.json({ received: true })
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Fout'
+    return NextResponse.json({ error: message }, { status: 400 })
   }
 }
