@@ -250,7 +250,28 @@ export type BaasDemoPdfInput = {
   sections: BaasDemoPdfSection[]
 }
 
+/** StandardFonts = WinAnsi; Unicode zoals ≥ “ ” — breekt drawText. */
+function sanitizeForPdfLib(text: string): string {
+  return text
+    .replace(/\u2265/g, '>=')
+    .replace(/\u2264/g, '<=')
+    .replace(/\u201c|\u201d/g, '"')
+    .replace(/\u2019/g, "'")
+    .replace(/\u2013/g, '-')
+    .replace(/\u2014/g, '--')
+    .replace(/\u2026/g, '...')
+    .replace(/\u00b2/g, '2')
+    .replace(/\u00b3/g, '3')
+}
+
 export async function buildBaasDemoDocumentPdfBuffer(input: BaasDemoPdfInput): Promise<Buffer> {
+  const docTitle = sanitizeForPdfLib(input.documentTitle)
+  const metaLines = input.metaLines.map(sanitizeForPdfLib)
+  const sections = input.sections.map((s) => ({
+    heading: sanitizeForPdfLib(s.heading),
+    paragraphs: s.paragraphs.map(sanitizeForPdfLib),
+  }))
+
   const pdf = await PDFDocument.create()
   const font = await pdf.embedFont(StandardFonts.Helvetica)
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold)
@@ -260,7 +281,7 @@ export async function buildBaasDemoDocumentPdfBuffer(input: BaasDemoPdfInput): P
   const layout: Layout = { pdf, page, y, font, fontBold }
 
   ensureSpace(layout, TITLE_SIZE + LINE * 3)
-  layout.page.drawText('BAAS B.V. — DEMO CONTRACTDOCUMENT', {
+  layout.page.drawText('BAAS B.V. - DEMO CONTRACTDOCUMENT', {
     x: M,
     y: layout.y,
     size: TITLE_SIZE,
@@ -268,7 +289,7 @@ export async function buildBaasDemoDocumentPdfBuffer(input: BaasDemoPdfInput): P
   })
   layout.y -= LINE * 2
 
-  layout.page.drawText(input.documentTitle, {
+  layout.page.drawText(docTitle, {
     x: M,
     y: layout.y,
     size: HEADING_SIZE,
@@ -277,9 +298,9 @@ export async function buildBaasDemoDocumentPdfBuffer(input: BaasDemoPdfInput): P
   layout.y -= LINE * 2
 
   drawHeading(layout, 'Documentgegevens')
-  drawLines(layout, wrapBlocks(input.metaLines, font, FONT_SIZE))
+  drawLines(layout, wrapBlocks(metaLines, font, FONT_SIZE))
 
-  for (const sec of input.sections) {
+  for (const sec of sections) {
     drawHeading(layout, sec.heading)
     const paras = sec.paragraphs.flatMap((p, i) => (i < sec.paragraphs.length - 1 ? [p, ''] : [p]))
     drawLines(layout, wrapBlocks(paras, font, FONT_SIZE))

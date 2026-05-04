@@ -3,7 +3,7 @@ import { db } from '@/lib/db'
 import { organizationMembers } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { redirect } from 'next/navigation'
-import { canManageUsers } from '@/lib/permissions'
+import { canManageUsers, canAssignSuperAdmin } from '@/lib/permissions'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { formatDate, ROLE_LABELS } from '@/lib/utils'
@@ -13,6 +13,8 @@ export default async function UsersPage() {
   const user = await getOrCreateUser()
   if (!user) redirect('/sign-in')
   if (!canManageUsers(user.role)) redirect('/dashboard')
+
+  const allowSuperAdminInUi = canAssignSuperAdmin(user.role)
 
   const memberRows = await db.query.organizationMembers.findMany({
     where: eq(organizationMembers.orgId, user.orgId!),
@@ -52,7 +54,14 @@ export default async function UsersPage() {
                   </td>
                   <td className="py-3 text-muted-foreground">{formatDate(u.createdAt)}</td>
                   <td className="py-3">
-                    {u.id !== user.id && <UserRoleEditor userId={u.id} currentRole={u.role} currentName={u.name} />}
+                    {u.id !== user.id && (
+                      <UserRoleEditor
+                        userId={u.id}
+                        currentRole={u.role}
+                        currentName={u.name}
+                        canAssignSuperAdmin={allowSuperAdminInUi}
+                      />
+                    )}
                   </td>
                 </tr>
               ))}

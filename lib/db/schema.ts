@@ -19,7 +19,14 @@ import {
 import { relations, sql } from 'drizzle-orm'
 
 // Enums
-export const userRoleEnum = pgEnum('user_role', ['admin', 'registrator', 'manager', 'compliance', 'reader'])
+export const userRoleEnum = pgEnum('user_role', [
+  'admin',
+  'registrator',
+  'manager',
+  'compliance',
+  'reader',
+  'super_admin',
+])
 export const contractStatusEnum = pgEnum('contract_status', ['concept', 'actief', 'verlopen', 'gearchiveerd', 'verwijderd'])
 export const obligationCategoryEnum = pgEnum('obligation_category', ['it_security', 'privacy', 'financial', 'sustainability', 'other'])
 export const obligationStatusEnum = pgEnum('obligation_status', ['open', 'in_progress', 'compliant', 'non_compliant'])

@@ -231,7 +231,7 @@ export interface ContractQuestionAnswer {
 
 type QaComplexity = 'simple' | 'complex'
 
-function sanitizeFollowUpQuestions(questions: unknown, originalQuestion: string): string[] {
+export function sanitizeFollowUpQuestions(questions: unknown, originalQuestion: string): string[] {
   if (!Array.isArray(questions)) return []
   const original = originalQuestion.trim().toLowerCase()
   const unique = new Set<string>()
@@ -271,6 +271,7 @@ function estimateQuestionComplexityHeuristically(question: string, sourceCount: 
     'aansprakelijkheid',
     'avg',
     'privacy',
+    'motivering',
   ]
   const hasComplexSignal = complexSignals.some((signal) => q.includes(signal))
   if (question.length > 280 || sourceCount >= 5 || hasComplexSignal) return 'complex'
@@ -292,6 +293,21 @@ async function determineQuestionComplexity(
   )
 
   const heuristicComplexity = estimateQuestionComplexityHeuristically(question, contextBlocks.length)
+  const qTrim = question.trim()
+  const qLen = qTrim.length
+
+  /**
+   * Snel pad: direct het snelle antwoordmodel (Haiku) zonder classifier-call.
+   */
+  if (
+    heuristicComplexity === 'simple' &&
+    qLen > 0 &&
+    qLen <= 420 &&
+    contextBlocks.length <= 5 &&
+    totalChars <= 300_000
+  ) {
+    return 'simple'
+  }
 
   try {
     const parsed = await createClaudeJsonCompletion<{ complexity?: QaComplexity }>({
@@ -314,14 +330,24 @@ Heuristische voorinschatting: ${heuristicComplexity}`,
   }
 }
 
-export async function answerContractQuestion(
-  question: string,
-  contextBlocks: { kind: 'contract' | 'contractstuk' | 'addendum' | 'url'; title: string; detail: string; text: string }[],
-  orgId: string
-): Promise<ContractQuestionAnswer> {
-  const complexity = await determineQuestionComplexity(question, contextBlocks, orgId)
-  const answerModel = complexity === 'complex' ? QA_ROUTING_MODELS.complexAnswer : QA_ROUTING_MODELS.simpleAnswer
+async function buildStreamModelCandidates(preferredModel: string): Promise<string[]> {
+  const configuredCandidates = Array.from(
+    new Set(
+      [preferredModel, ...CLAUDE_MODELS.fallbacks, CLAUDE_MODELS.complexAnswer, CLAUDE_MODELS.simpleAnswer].filter(
+        Boolean
+      )
+    )
+  )
+  const availableModels = await getAvailableAnthropicModels()
+  if (availableModels.length) {
+    return orderAvailableModelsByIntent(availableModels, preferredModel)
+  }
+  return configuredCandidates
+}
 
+function buildContractQaSourceSections(
+  contextBlocks: { kind: 'contract' | 'contractstuk' | 'addendum' | 'url'; title: string; detail: string; text: string }[]
+) {
   const parts = contextBlocks.map((b, i) => {
     let label: string
     if (b.kind === 'contract') label = `Hoofdcontract: ${b.title} (${b.detail})`
@@ -330,20 +356,186 @@ export async function answerContractQuestion(
     else label = `Externe bron: ${b.title}`
     return `--- bron ${i + 1}: ${label} ---\n${b.text}`
   })
-  const joined = parts.join('\n\n')
+  return parts.join('\n\n').slice(0, 100_000)
+}
+
+/** Opties voor contract-QA: expliciete contractkeuze in de UI. */
+export type ContractQaCallOptions = {
+  /**
+   * Contract-id('s) die de gebruiker heeft aangevinkt. Zet dit om het model te dwingen
+   * uitsluitend in die dossiers te redeneren (geen impliciete portefeuille).
+   */
+  scopedContractIds?: string[]
+}
+
+function buildContractQaUserMessage(
+  question: string,
+  orgId: string,
+  joinedSources: string,
+  options?: ContractQaCallOptions
+): string {
+  const body = `Organisatie: org_${orgId}\nVraag:\n${question}\n\n--- Bronnen ---\n${joinedSources}`
+  const ids = options?.scopedContractIds?.filter(Boolean) ?? []
+  if (ids.length === 0) return body
+
+  const idList = ids.join(', ')
+  const scopePreamble =
+    ids.length === 1
+      ? `SCOPE (strikt) — De gebruiker heeft precies één contract gekozen (contract-id: ${idList}). Er zijn geen andere contracten beschikbaar in deze vraag: gebruik uitsluitend de onderstaande bronteksten van dit dossier (hoofdcontract, stukken, addenda) en eventuele apart gemelde URL-bronnen. Verzin geen clausules of feiten uit andere contracten. Als iets niet in deze bron staat, zeg dat expliciet.\n\n`
+      : `SCOPE (strikt) — De gebruiker heeft ${ids.length} contracten gekozen (contract-ids: ${idList}). Gebruik uitsluitend de onderstaande bronnen die bij deze dossiers horen, plus eventuele apart gemelde URL-bronnen. Geen informatie uit niet-geselecteerde contracten. Als de vraag iets vraagt buiten deze selectie, leg dat uit.\n\n`
+  return scopePreamble + body
+}
+
+const CONTRACT_QA_HTML_SYSTEM = `Je bent een senior contractjurist en adviseur. Beantwoord de vraag uitsluitend op basis van de meegeleverde bronnen.
+Regels:
+- Antwoord in het Nederlands, als geldige HTML-fragmenten (geen <html>, <head>, <body>, geen <script> of <style>).
+- Gebruik semantische opmaak: <h2> voor hoofdsecties, <h3> voor subsecties, <p> voor alinea's, <ul>/<ol>/<li> voor lijsten, <table>, <thead>, <tbody>, <tr>, <th>, <td> voor tabellen (met kopregel in <th>), <strong> en <em> waar nuttig, <blockquote> voor citaten.
+- Begin het antwoord direct met een eerste <h2> of <p> (geen inleidende woorden buiten HTML).
+- Volgorde inhoudelijk: eerst hoofdcontract(en), dan extra contractstukken, daarna addenda; het laatst genoemde addendum wint bij tegenstrijdigheid tussen addenda.
+- Verwijs in de lopende tekst concreet naar de bron (titel of bestandsnaam).
+- Geen feiten verzinnen; als de bronnen iets niet zeggen, zeg dat eerlijk.
+- Als de vraag begint met een SCOPE (strikt)-blok: de gebruiker heeft een expliciete contractkeuze gemaakt — gebruik dan alleen die dossiers, nooit impliciet andere contracten uit de organisatie.
+- Lever alleen de antwoord-HTML. Geen JSON, geen markdown, geen omhullend <pre> of codeblok rond het hele antwoord.`
+
+/**
+ * Streamt het antwoord token-voor-token (Claude text deltas) voor live weergave in de UI.
+ */
+export async function* streamAnswerContractQuestionHtml(
+  question: string,
+  contextBlocks: { kind: 'contract' | 'contractstuk' | 'addendum' | 'url'; title: string; detail: string; text: string }[],
+  orgId: string,
+  options?: ContractQaCallOptions
+): AsyncGenerator<string, void, undefined> {
+  const complexity = await determineQuestionComplexity(question, contextBlocks, orgId)
+  const preferredModel = complexity === 'complex' ? QA_ROUTING_MODELS.complexAnswer : QA_ROUTING_MODELS.simpleAnswer
+  const joined = buildContractQaSourceSections(contextBlocks)
+  const user = buildContractQaUserMessage(question, orgId, joined, options)
+
+  const candidates = await buildStreamModelCandidates(preferredModel)
+  let lastErr: unknown = null
+  for (const model of candidates) {
+    try {
+      const stream = anthropic.messages.stream({
+        model,
+        max_tokens: 4096,
+        system: CONTRACT_QA_HTML_SYSTEM,
+        messages: [{ role: 'user', content: user }],
+      })
+      for await (const event of stream) {
+        if (
+          event.type === 'content_block_delta' &&
+          event.delta.type === 'text_delta' &&
+          typeof event.delta.text === 'string'
+        ) {
+          yield event.delta.text
+        }
+      }
+      return
+    } catch (err) {
+      lastErr = err
+      if (!isModelNotFoundError(err)) throw err
+    }
+  }
+  throw lastErr ?? new Error('Geen geldig Claude model beschikbaar')
+}
+
+/** @deprecated Gebruik streamAnswerContractQuestionHtml. */
+export const streamAnswerContractQuestionMarkdown = streamAnswerContractQuestionHtml
+
+function normalizeExtractedSourceType(t: unknown): QaSourceRef['type'] {
+  const s = String(t ?? '').toLowerCase().trim()
+  if (s === 'contract' || s === 'contractstuk' || s === 'addendum' || s === 'url') return s
+  return 'contract'
+}
+
+/** Na streaming: compacte Haiku-call voor bronnen, beperkingen en vervolgvragen. */
+export async function extractContractAskStructuredFields(
+  question: string,
+  answerHtml: string,
+  contextBlocks: { kind: 'contract' | 'contractstuk' | 'addendum' | 'url'; title: string; detail: string }[],
+  orgId: string,
+  options?: ContractQaCallOptions
+): Promise<Pick<ContractQuestionAnswer, 'sources' | 'limitations' | 'followUpQuestions'>> {
+  const summaries = contextBlocks.map((b, i) => ({
+    bron: i + 1,
+    type: b.kind,
+    title: b.title,
+    detail: b.detail.slice(0, 400),
+  }))
+  const scopeNote =
+    options?.scopedContractIds && options.scopedContractIds.length > 0
+      ? `\nLet op: de gebruiker beperkte de zoekopdracht tot contract-id(s): ${options.scopedContractIds.join(', ')}. Vermeld geen bronnen die niet tot deze dossiers (of de gegeven URL-bronnen) behoren.\n`
+      : ''
+  type Raw = {
+    sources?: { type?: string; title?: string; detail?: string; relevance?: string }[]
+    limitations?: string | null
+    followUpQuestions?: string[]
+  }
+  const raw = await createClaudeJsonCompletion<Raw>({
+    model: QA_ROUTING_MODELS.simpleAnswer,
+    maxTokens: 2048,
+    system: `Je vult metadata bij een contractantwoord. Antwoord ALLEEN met JSON:
+{
+  "sources": [ { "type": "contract"|"contractstuk"|"addendum"|"url", "title": string, "detail": string, "relevance": string } ],
+  "limitations": string|null,
+  "followUpQuestions": [string]
+}
+Gebruik uitsluitend bronnen uit de meegeleverde lijst die het antwoord ondersteunen. title en detail moeten bij de lijst horen.`,
+    user: `Organisatie: org_${orgId}
+Vraag: ${question}
+${scopeNote}
+Antwoord (HTML):
+${answerHtml.slice(0, 24_000)}
+
+Bronnen-metadata:
+${JSON.stringify(summaries).slice(0, 20_000)}`,
+  })
+  const sources: QaSourceRef[] = Array.isArray(raw.sources)
+    ? raw.sources
+        .map((s) => {
+          const rel = typeof s?.relevance === 'string' ? s.relevance.trim() : ''
+          return {
+            type: normalizeExtractedSourceType(s?.type),
+            title: typeof s?.title === 'string' ? s.title : '',
+            detail: typeof s?.detail === 'string' ? s.detail : '',
+            relevance: rel.length > 0 ? rel : 'Zie het antwoord.',
+          }
+        })
+        .filter((s) => s.title.length > 0)
+    : []
+  const limitations =
+    raw.limitations === null ? null : typeof raw.limitations === 'string' ? raw.limitations : null
+  const followUpQuestions = Array.isArray(raw.followUpQuestions)
+    ? raw.followUpQuestions.filter((x): x is string => typeof x === 'string')
+    : []
+  return { sources, limitations, followUpQuestions }
+}
+
+export async function answerContractQuestion(
+  question: string,
+  contextBlocks: { kind: 'contract' | 'contractstuk' | 'addendum' | 'url'; title: string; detail: string; text: string }[],
+  orgId: string,
+  options?: ContractQaCallOptions
+): Promise<ContractQuestionAnswer> {
+  const complexity = await determineQuestionComplexity(question, contextBlocks, orgId)
+  const answerModel = complexity === 'complex' ? QA_ROUTING_MODELS.complexAnswer : QA_ROUTING_MODELS.simpleAnswer
+
+  const joined = buildContractQaSourceSections(contextBlocks)
+  const userContent = buildContractQaUserMessage(question, orgId, joined, options)
 
   const result = await createClaudeJsonCompletion<ContractQuestionAnswer>({
     model: answerModel,
     system: `Je bent een senior contractjurist en adviseur. Beantwoord de vraag van de gebruiker uitsluitend op basis van de meegeleverde bronnen.
 Regels:
-- Antwoord in het Nederlands, helder en gestructureerd (kopjes waar nuttig).
+- Antwoord in het Nederlands als geldige HTML-fragmenten (geen <html>/<body>, geen script/style): gebruik <h2>, <h3>, <p>, lijsten, tabellen met <table>/<thead>/<tbody>/<tr>/<th>/<td>, <strong>, <em>, <blockquote> waar passend.
 - **Volgorde en voorrang:** eerst hoofdcontract(en), dan **extra contractstukken** (bijlagen zonder wijzigingskarakter), daarna **addenda**. Addenda gaan voor op hoofdcontract en extra contractstukken waar ze afwijken. Tussen addenda wint **het laatst in deze lijst genoemde addendum** (nieuwste) bij tegenstrijdigheid met oudere addenda.
 - Citeer concreet: verwijs naar welke bron (contracttitel, bestandsnaam addendum, of URL-host) en parafraseer of kort citeer waar relevant.
 - Als de bronnen de vraag niet volledig beantwoorden, zeg dat expliciet en wat er wél in de bronnen staat.
 - Geen aannames over feiten die niet in de tekst staan.
+- Als de gebruikersvraag begint met SCOPE (strikt): er is een expliciete contractkeuze — gebruik alleen die dossiers, geen kennis uit andere contracten van de organisatie.
 - Antwoord ALLEEN als JSON:
 {
-  "answer": string (Markdown toegestaan),
+  "answer": string (geldige HTML-fragmenten, geen markdown),
   "sources": [
     {
       "type": "contract"|"contractstuk"|"addendum"|"url",
@@ -355,7 +547,7 @@ Regels:
   "limitations": string|null (bijv. ontbrekende clausule, of alleen in bron 2)
   "followUpQuestions": [string] (2-4 korte, concrete vervolgvraag-suggesties in het Nederlands die logisch aansluiten op dit antwoord)
 }`,
-    user: `Organisatie: org_${orgId}\nVraag:\n${question}\n\n--- Bronnen ---\n${joined.slice(0, 100_000)}`,
+    user: userContent.slice(0, 120_000),
   })
   return {
     ...result,

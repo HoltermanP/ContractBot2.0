@@ -14,6 +14,7 @@ export const STATUS_LABELS: Record<string, string> = {
 }
 
 export const ROLE_LABELS: Record<string, string> = {
+  super_admin: "Super-admin",
   admin: "Admin",
   registrator: "Registrator",
   manager: "Manager",

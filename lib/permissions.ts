@@ -1,5 +1,15 @@
 import type { UserRole } from './auth'
 
+/** Platform-superuser: alle orgs, alle rechten (tenant-beheer). */
+export function isSuperAdmin(role: UserRole): boolean {
+  return role === 'super_admin'
+}
+
+/** Organisatie-beheerder (admin) of platform-super-admin. */
+export function isOrgAdminRole(role: UserRole): boolean {
+  return role === 'super_admin' || role === 'admin'
+}
+
 /** Hiërarchie alleen voor `requireRole()` — hogere rol erft rechten van lagere drempels. */
 export function roleRank(role: UserRole): number {
   const m: Record<UserRole, number> = {
@@ -8,13 +18,14 @@ export function roleRank(role: UserRole): number {
     registrator: 2,
     manager: 3,
     admin: 4,
+    super_admin: 5,
   }
   return m[role]
 }
 
 /** Contract aanmaken/bewerken, leveranciers muteren, documenten uploaden, verplichtingen/notificaties. */
 export function canMutateContractData(role: UserRole): boolean {
-  return role === 'admin' || role === 'manager' || role === 'registrator'
+  return isOrgAdminRole(role) || role === 'manager' || role === 'registrator'
 }
 
 export function canViewArchivedContracts(role: UserRole): boolean {
@@ -28,17 +39,17 @@ export function canEditContractOverview(
   userId: string
 ): boolean {
   if (role === 'compliance' || role === 'reader') return false
-  if (role === 'admin' || role === 'registrator') return true
+  if (isOrgAdminRole(role) || role === 'registrator') return true
   if (role === 'manager' && contract.ownerUserId === userId) return true
   return false
 }
 
 export function canArchiveOrUnarchiveContract(role: UserRole): boolean {
-  return role === 'admin' || role === 'manager'
+  return isOrgAdminRole(role) || role === 'manager'
 }
 
 export function canDeleteContract(role: UserRole): boolean {
-  return role === 'admin'
+  return isOrgAdminRole(role)
 }
 
 export function canBulkDownloadDocuments(role: UserRole): boolean {
@@ -50,19 +61,19 @@ export function canRestoreDocumentVersion(role: UserRole): boolean {
 }
 
 export function canApproveWorkflow(role: UserRole): boolean {
-  return role === 'admin' || role === 'manager'
+  return isOrgAdminRole(role) || role === 'manager'
 }
 
 export function canManageOrgSettings(role: UserRole): boolean {
-  return role === 'admin'
+  return isOrgAdminRole(role)
 }
 
 export function canManageProjects(role: UserRole): boolean {
-  return role === 'admin' || role === 'manager'
+  return isOrgAdminRole(role) || role === 'manager'
 }
 
 export function canManageUsers(role: UserRole): boolean {
-  return role === 'admin'
+  return isOrgAdminRole(role)
 }
 
 export function canManageSupplierWrite(role: UserRole): boolean {
@@ -71,10 +82,15 @@ export function canManageSupplierWrite(role: UserRole): boolean {
 
 /** Training & e-learning: alleen voor org-admin (navigatie, API, cursussen). */
 export function canAccessTrainingModule(role: UserRole): boolean {
-  return role === 'admin'
+  return isOrgAdminRole(role)
 }
 
 /** Cursusdata ophalen (incl. concept): alleen admin. */
 export function canViewTrainingCourse(role: UserRole, _courseStatus: 'draft' | 'published'): boolean {
   return canAccessTrainingModule(role)
+}
+
+/** Alleen super-admin mag anderen tot super-admin promoveren. */
+export function canAssignSuperAdmin(actorRole: UserRole): boolean {
+  return isSuperAdmin(actorRole)
 }

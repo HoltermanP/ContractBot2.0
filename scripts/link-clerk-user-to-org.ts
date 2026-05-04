@@ -14,7 +14,7 @@
  *
  * Argumenten: <clerkUserId> [orgSlug] [rol]
  * - orgSlug: default `universiteit-leiden` (zoals in scripts/seed.ts)
- * - rol: admin | manager | registrator | compliance | reader — default `admin`
+ * - rol: super_admin | admin | manager | registrator | compliance | reader — default `admin`
  */
 import { loadEnvConfig } from '@next/env'
 loadEnvConfig(process.cwd())
@@ -33,7 +33,7 @@ import { drizzle } from 'drizzle-orm/neon-http'
 import * as schema from '../lib/db/schema'
 import { and, eq } from 'drizzle-orm'
 
-const ROLES = ['admin', 'manager', 'registrator', 'compliance', 'reader'] as const
+const ROLES = ['super_admin', 'admin', 'manager', 'registrator', 'compliance', 'reader'] as const
 type Role = (typeof ROLES)[number]
 
 function parseRole(s: string | undefined): Role {

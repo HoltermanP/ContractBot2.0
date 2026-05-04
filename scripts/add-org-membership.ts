@@ -25,7 +25,7 @@ function normalizeDatabaseUrl(raw: string | undefined): string {
   return t
 }
 
-const ROLES = ['admin', 'manager', 'registrator', 'compliance', 'reader'] as const
+const ROLES = ['super_admin', 'admin', 'manager', 'registrator', 'compliance', 'reader'] as const
 type Role = (typeof ROLES)[number]
 
 function parseRole(s: string | undefined): Role {

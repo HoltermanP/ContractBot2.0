@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { ensureOrgMembership, getOrCreateUser } from '@/lib/auth'
+import { ensureOrgMembership, getOrCreateUser, type UserRole } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { organizationMembers, organizations, users } from '@/lib/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { userFacingApiError } from '@/lib/user-facing-api-error'
+import { isOrgAdminRole, isSuperAdmin } from '@/lib/permissions'
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,7 +20,7 @@ export async function POST(req: NextRequest) {
     })
 
     if (!membership) {
-      if (user.role !== 'admin') {
+      if (!isOrgAdminRole(user.role)) {
         return NextResponse.json({ error: 'Geen lidmaatschap voor deze organisatie' }, { status: 403 })
       }
       const org = await db.query.organizations.findFirst({
@@ -28,7 +29,8 @@ export async function POST(req: NextRequest) {
       if (!org) {
         return NextResponse.json({ error: 'Organisatie niet gevonden' }, { status: 404 })
       }
-      await ensureOrgMembership(user.id, orgId, 'admin')
+      const bootstrapRole: UserRole = isSuperAdmin(user.role) ? 'super_admin' : 'admin'
+      await ensureOrgMembership(user.id, orgId, bootstrapRole)
       membership = await db.query.organizationMembers.findFirst({
         where: and(eq(organizationMembers.userId, user.id), eq(organizationMembers.orgId, orgId)),
       })
@@ -37,12 +39,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    await db
-      .update(users)
-      .set({ orgId: membership.orgId, role: membership.role })
-      .where(eq(users.id, user.id))
+    const nextRole: UserRole = isSuperAdmin(user.role) ? 'super_admin' : (membership.role as UserRole)
 
-    return NextResponse.json({ ok: true, orgId: membership.orgId, role: membership.role })
+    await db.update(users).set({ orgId: membership.orgId, role: nextRole }).where(eq(users.id, user.id))
+
+    return NextResponse.json({ ok: true, orgId: membership.orgId, role: nextRole })
   } catch (err: unknown) {
     return NextResponse.json({ error: userFacingApiError(err) }, { status: 500 })
   }

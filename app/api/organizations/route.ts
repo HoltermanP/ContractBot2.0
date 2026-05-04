@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getOrCreateUser, ensureOrgMembership } from '@/lib/auth'
+import { getOrCreateUser, ensureOrgMembership, type UserRole } from '@/lib/auth'
 import { db, organizations, organizationMembers } from '@/lib/db'
 import { users, projects } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { slugifyOrganizationSlug } from '@/lib/org'
 import { userFacingApiError } from '@/lib/user-facing-api-error'
+import { isOrgAdminRole, isSuperAdmin } from '@/lib/permissions'
 
 type OrgRow = {
   orgId: string
@@ -28,7 +29,8 @@ export async function GET() {
 
     let organizationsList: OrgRow[]
 
-    if (user.role === 'admin') {
+    if (isOrgAdminRole(user.role)) {
+      const defaultRole: UserRole = isSuperAdmin(user.role) ? 'super_admin' : 'admin'
       const allOrgs = await db.query.organizations.findMany({
         orderBy: (o, { asc }) => [asc(o.name)],
       })
@@ -36,7 +38,7 @@ export async function GET() {
         const m = memberByOrgId.get(org.id)
         return {
           orgId: org.id,
-          role: m?.role ?? 'admin',
+          role: m?.role ?? defaultRole,
           name: org.name,
           slug: org.slug,
           isActive: org.id === user.orgId,
@@ -54,7 +56,7 @@ export async function GET() {
 
     return NextResponse.json({
       organizations: organizationsList,
-      isGlobalAdmin: user.role === 'admin',
+      isGlobalAdmin: isOrgAdminRole(user.role),
     })
   } catch (err: unknown) {
     return NextResponse.json({ error: userFacingApiError(err) }, { status: 500 })
@@ -89,9 +91,10 @@ export async function POST(req: NextRequest) {
       description: 'Standaardproject voor contracten',
     })
 
-    await ensureOrgMembership(user.id, org.id, 'admin')
+    const creatorOrgRole: UserRole = isSuperAdmin(user.role) ? 'super_admin' : 'admin'
+    await ensureOrgMembership(user.id, org.id, creatorOrgRole)
 
-    await db.update(users).set({ orgId: org.id, role: 'admin' }).where(eq(users.id, user.id))
+    await db.update(users).set({ orgId: org.id, role: creatorOrgRole }).where(eq(users.id, user.id))
 
     return NextResponse.json({ id: org.id, name: org.name, slug: org.slug })
   } catch (err: unknown) {

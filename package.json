@@ -16,7 +16,10 @@
     "db:verify:baas": "npx tsx scripts/verify-baas-seed.ts",
     "blob:smoke": "npx tsx scripts/blob-smoke-test.ts",
     "db:link-user": "npx tsx scripts/link-clerk-user-to-org.ts",
-    "db:add-org-member": "npx tsx scripts/add-org-membership.ts"
+    "db:add-org-member": "npx tsx scripts/add-org-membership.ts",
+    "db:set-super-admin": "npx tsx scripts/set-super-admin.ts",
+    "db:diagnose": "npx tsx scripts/diagnose-db.ts",
+    "db:link-user-email": "npx tsx scripts/link-user-by-email.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",

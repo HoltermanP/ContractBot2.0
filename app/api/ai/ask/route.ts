@@ -1,14 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getOrCreateUser } from '@/lib/auth'
-import { answerContractQuestion } from '@/lib/openai'
+import {
+  answerContractQuestion,
+  extractContractAskStructuredFields,
+  sanitizeFollowUpQuestions,
+  streamAnswerContractQuestionHtml,
+  type ContractQuestionAnswer,
+} from '@/lib/openai'
 import { db, contracts, projects } from '@/lib/db'
 import { and, eq } from 'drizzle-orm'
 import {
   contractIdsWithDocumentsFallback,
   contractIdsWithDocumentsFallbackForProject,
+  contractIdsWithDocumentsFallbackUnassigned,
   loadContractTextBlocks,
   semanticTopContractIds,
   semanticTopContractIdsForProject,
+  semanticTopContractIdsUnassigned,
   type QaContextBlock,
 } from '@/lib/contract-qa-context'
 import { fetchReferenceUrlAsText } from '@/lib/fetch-reference-url'
@@ -53,6 +61,7 @@ export async function POST(req: NextRequest) {
     }
 
     const portfolioMode = body.portfolioMode !== false && contractIds.length === 0
+    const portfolioUnassignedOnly = body.portfolioUnassignedOnly === true
 
     const urlsRaw = Array.isArray(body.referenceUrls) ? body.referenceUrls : []
     const referenceUrls = [...new Set(urlsRaw.filter((u: unknown) => typeof u === 'string' && u.trim().length > 0))].slice(
@@ -79,8 +88,26 @@ export async function POST(req: NextRequest) {
         }
       }
       contractBlocks = await loadContractTextBlocks(user.orgId, contractIds, { hideArchivedForReader: readerMode })
+      /* Alleen gekozen dossiers: defensief filteren op contract-id. */
+      const idSet = new Set(contractIds)
+      contractBlocks = contractBlocks.filter((b) => idSet.has(b.id))
     } else if (portfolioMode) {
-      if (projectId) {
+      if (portfolioUnassignedOnly && !projectId) {
+        let topIds = await semanticTopContractIdsUnassigned(
+          user.orgId,
+          question,
+          MAX_CONTEXT_CONTRACTS,
+          { readerMode }
+        )
+        if (topIds.length === 0) {
+          topIds = await contractIdsWithDocumentsFallbackUnassigned(
+            user.orgId,
+            MAX_CONTEXT_CONTRACTS,
+            { readerMode }
+          )
+        }
+        contractBlocks = await loadContractTextBlocks(user.orgId, topIds, { hideArchivedForReader: readerMode })
+      } else if (projectId) {
         let topIds = await semanticTopContractIdsForProject(
           user.orgId,
           projectId,
@@ -138,11 +165,78 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const result = await answerContractQuestion(
-      question,
-      allBlocks.map((b) => ({ kind: b.kind, title: b.title, detail: b.detail, text: b.text })),
-      user.orgId
-    )
+    const ctxForAi = allBlocks.map((b) => ({ kind: b.kind, title: b.title, detail: b.detail, text: b.text }))
+    const ctxMetaOnly = ctxForAi.map((b) => ({ kind: b.kind, title: b.title, detail: b.detail }))
+    const useStream = body.stream === true
+    /** Expliciete contractkeuze in de UI → model en metadata alleen binnen die dossiers. */
+    const qaOptions = contractIds.length > 0 ? { scopedContractIds: contractIds } : undefined
+
+    if (useStream) {
+      const encoder = new TextEncoder()
+      const ndjson = new ReadableStream({
+        async start(controller) {
+          const push = (obj: unknown) => controller.enqueue(encoder.encode(`${JSON.stringify(obj)}\n`))
+          try {
+            let answerHtml = ''
+            for await (const chunk of streamAnswerContractQuestionHtml(question, ctxForAi, user.orgId, qaOptions)) {
+              answerHtml += chunk
+              push({ type: 'delta', text: chunk })
+            }
+            const extracted = await extractContractAskStructuredFields(
+              question,
+              answerHtml,
+              ctxMetaOnly,
+              user.orgId,
+              qaOptions
+            )
+            const merged: ContractQuestionAnswer = {
+              answer: answerHtml,
+              sources: extracted.sources,
+              limitations: extracted.limitations,
+              followUpQuestions: sanitizeFollowUpQuestions(extracted.followUpQuestions, question),
+            }
+            const sourcesWithLinks = enrichAskSources(merged.sources, allBlocks)
+            const payload = {
+              ...merged,
+              sources: sourcesWithLinks,
+              contextSummary: {
+                contractsUsed: dedupeContractsById(contractBlocks),
+                urlsUsed: urlBlocks.map((b) => ({ url: b.detail })),
+                ...(projectScopeMeta ? { projectScope: projectScopeMeta } : {}),
+              },
+            }
+            try {
+              await persistContractAskTurn({
+                orgId: user.orgId,
+                userId: user.id,
+                questionRaw: question,
+                portfolioMode,
+                contractIds,
+                referenceUrls,
+                response: payload,
+              })
+            } catch (e) {
+              console.error('contract ask persist failed', e)
+            }
+            push({ type: 'done', ...payload })
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : 'Onbekende fout'
+            push({ type: 'error', error: message })
+          } finally {
+            controller.close()
+          }
+        },
+      })
+      return new Response(ndjson, {
+        headers: {
+          'Content-Type': 'application/x-ndjson; charset=utf-8',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        },
+      })
+    }
+
+    const result = await answerContractQuestion(question, ctxForAi, user.orgId, qaOptions)
 
     const sourcesWithLinks = enrichAskSources(result.sources, allBlocks)
 

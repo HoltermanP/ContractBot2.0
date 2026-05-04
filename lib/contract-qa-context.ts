@@ -210,3 +210,60 @@ export async function semanticTopContractIdsForProject(
   `)
   return (results.rows as { id: string }[]).map((r) => r.id)
 }
+
+/** Contracten zonder gekoppeld project (project_id IS NULL). */
+export async function contractIdsWithDocumentsFallbackUnassigned(
+  orgId: string,
+  limit: number,
+  options?: { readerMode?: boolean }
+): Promise<string[]> {
+  const rs = readerStatusClause(options?.readerMode)
+  const results = await db.execute(sql`
+    SELECT c.id
+    FROM contracts c
+    WHERE c.org_id = ${orgId}
+      AND c.project_id IS NULL
+      ${rs}
+      AND EXISTS (
+        SELECT 1 FROM contract_documents d
+        WHERE d.contract_id = c.id AND d.is_current = true
+      )
+    ORDER BY c.updated_at DESC NULLS LAST
+    LIMIT ${limit}
+  `)
+  return (results.rows as { id: string }[]).map((r) => r.id)
+}
+
+/** Semantisch top-contracten zonder project (vereist embeddings). */
+export async function semanticTopContractIdsUnassigned(
+  orgId: string,
+  question: string,
+  limit: number,
+  options?: { readerMode?: boolean }
+): Promise<string[]> {
+  const readerClause = readerStatusClauseContracts(options?.readerMode)
+  const anyIndexed = await db.execute(sql`
+    SELECT id FROM contracts
+    WHERE org_id = ${orgId}
+      AND project_id IS NULL
+      AND content_embedding IS NOT NULL
+      ${readerClause}
+    LIMIT 1
+  `)
+  if ((anyIndexed.rows as { id: string }[]).length === 0) {
+    return []
+  }
+
+  const embedding = await getEmbedding(question)
+  const results = await db.execute(sql`
+    SELECT id
+    FROM contracts
+    WHERE org_id = ${orgId}
+      AND project_id IS NULL
+      AND content_embedding IS NOT NULL
+      ${readerClause}
+    ORDER BY content_embedding <=> ${JSON.stringify(embedding)}::vector
+    LIMIT ${limit}
+  `)
+  return (results.rows as { id: string }[]).map((r) => r.id)
+}

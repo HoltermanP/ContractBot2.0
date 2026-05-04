@@ -6,7 +6,18 @@ import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
 import { Loader2 } from 'lucide-react'
 
-export function UserRoleEditor({ userId, currentRole, currentName }: { userId: string; currentRole: string; currentName: string }) {
+export function UserRoleEditor({
+  userId,
+  currentRole,
+  currentName,
+  canAssignSuperAdmin = false,
+}: {
+  userId: string
+  currentRole: string
+  currentName: string
+  /** Alleen true voor ingelogde super-admin: optie om anderen super-admin te maken. */
+  canAssignSuperAdmin?: boolean
+}) {
   const router = useRouter()
   const [role, setRole] = useState(currentRole)
   const [saving, setSaving] = useState(false)
@@ -36,6 +47,7 @@ export function UserRoleEditor({ userId, currentRole, currentName }: { userId: s
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
+          {canAssignSuperAdmin && <SelectItem value="super_admin">Super-admin (platform)</SelectItem>}
           <SelectItem value="admin">Beheerder</SelectItem>
           <SelectItem value="manager">Contractmanager</SelectItem>
           <SelectItem value="registrator">Contractregistrator</SelectItem>

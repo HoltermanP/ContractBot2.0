@@ -7,7 +7,6 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import {
   Loader2,
-  Bot,
   Link2,
   Copy,
   Check,
@@ -64,8 +63,6 @@ type ChatMessage = {
   isError?: boolean
 }
 
-type FaqCluster = { id: string; label: string; askCount: number }
-
 type ScopeMode = 'org' | 'project'
 
 /** Lijstfilter: leeg = alle projecten; anders project-id; __unassigned__ = contracten zonder project */
@@ -93,8 +90,10 @@ export default function ContractAskClient() {
   const [error, setError] = useState<string | null>(null)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
-  const [faqClusters, setFaqClusters] = useState<FaqCluster[]>([])
+  /** Bronnen-accordion: standaard open (smalle linkerkolom). */
+  const [bronnenDetailsOpen, setBronnenDetailsOpen] = useState(true)
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
+  const scrollStreamRaf = useRef<number | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -159,58 +158,6 @@ export default function ContractAskClient() {
       cancelled = true
     }
   }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      try {
-        const res = await fetch('/api/ai/ask/faq')
-        if (!res.ok) return
-        const data = await res.json()
-        if (
-          cancelled ||
-          !Array.isArray(data) ||
-          !data.every(
-            (row: unknown) =>
-              row &&
-              typeof row === 'object' &&
-              typeof (row as FaqCluster).id === 'string' &&
-              typeof (row as FaqCluster).label === 'string'
-          )
-        ) {
-          return
-        }
-        setFaqClusters(data as FaqCluster[])
-      } catch {
-        /* ignore */
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  async function refreshFaqClusters() {
-    try {
-      const res = await fetch('/api/ai/ask/faq')
-      if (!res.ok) return
-      const data = await res.json()
-      if (
-        Array.isArray(data) &&
-        data.every(
-          (row: unknown) =>
-            row &&
-            typeof row === 'object' &&
-            typeof (row as FaqCluster).id === 'string' &&
-            typeof (row as FaqCluster).label === 'string'
-        )
-      ) {
-        setFaqClusters(data as FaqCluster[])
-      }
-    } catch {
-      /* ignore */
-    }
-  }
 
   const projectFilterOptions = useMemo(() => {
     const knownIds = new Set(projects.map((p) => p.id))
@@ -307,12 +254,20 @@ export default function ContractAskClient() {
     })
   }
 
-  /** Na layout: voorkomt dat scrollHeight nog 0 is na nieuwe berichten (minder “haperend” scrollen). */
+  function queueScrollDuringStream() {
+    if (scrollStreamRaf.current != null) return
+    scrollStreamRaf.current = requestAnimationFrame(() => {
+      scrollStreamRaf.current = null
+      const el = chatScrollRef.current
+      if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'auto' })
+    })
+  }
+
+  /** Bij nieuwe berichten (niet bij elke stream-chunk). */
   useLayoutEffect(() => {
     scrollChatToBottom()
-  }, [chatMessages])
+  }, [chatMessages.length])
 
-  /** Direct tonen: geen “typewriter” — die veroorzaakte honderden re-renders en een trage UI. */
   function applyAssistantAnswer(messageId: string, response: AskResponse) {
     const fullAnswer = response.answer ?? ''
     setChatMessages((prev) =>
@@ -348,14 +303,31 @@ export default function ContractAskClient() {
       const wholeProject =
         scopeMode === 'project' && Boolean(selectedScopeProjectId) && explicitIds.length === 0
 
+      const projectIdForPortfolio =
+        explicitIds.length === 0 &&
+        !wholeProject &&
+        listFilterProjectId &&
+        listFilterProjectId !== LIST_FILTER_UNASSIGNED
+          ? listFilterProjectId
+          : undefined
+
+      const portfolioUnassignedOnly =
+        explicitIds.length === 0 && !wholeProject && listFilterProjectId === LIST_FILTER_UNASSIGNED
+
       const payload: Record<string, unknown> = {
         question: q,
         contractIds: explicitIds,
         portfolioMode: explicitIds.length === 0,
         referenceUrls: urls,
+        stream: true,
       }
       if (wholeProject) {
         payload.projectId = selectedScopeProjectId
+      } else if (projectIdForPortfolio) {
+        payload.projectId = projectIdForPortfolio
+      }
+      if (portfolioUnassignedOnly) {
+        payload.portfolioUnassignedOnly = true
       }
 
       const res = await fetch('/api/ai/ask', {
@@ -363,22 +335,16 @@ export default function ContractAskClient() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
-      const raw = await res.text()
-      let data: { error?: string } & Partial<AskResponse> = {}
-      try {
-        data = raw ? (JSON.parse(raw) as typeof data) : {}
-      } catch {
-        const errMessage = raw?.slice(0, 200) || 'Ongeldig antwoord van de server'
-        setError(errMessage)
-        setChatMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === assistantMessageId ? { ...msg, content: errMessage, isError: true } : msg
-          )
-        )
-        return
-      }
+
       if (!res.ok) {
-        const errMessage = typeof data.error === 'string' ? data.error : 'Er ging iets mis'
+        const raw = await res.text()
+        let errMessage = 'Er ging iets mis'
+        try {
+          const j = raw ? (JSON.parse(raw) as { error?: string }) : {}
+          if (typeof j.error === 'string') errMessage = j.error
+        } catch {
+          errMessage = raw?.slice(0, 200) || errMessage
+        }
         setError(errMessage)
         setChatMessages((prev) =>
           prev.map((msg) =>
@@ -387,8 +353,74 @@ export default function ContractAskClient() {
         )
         return
       }
-      applyAssistantAnswer(assistantMessageId, data as AskResponse)
-      void refreshFaqClusters()
+
+      const reader = res.body?.getReader()
+      if (!reader) {
+        const errMessage = 'Geen antwoordstroom'
+        setError(errMessage)
+        setChatMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMessageId ? { ...msg, content: errMessage, isError: true } : msg
+          )
+        )
+        return
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let streamed = ''
+      let streamError: string | null = null
+      let completed = false
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let nl: number
+        while ((nl = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, nl).trim()
+          buffer = buffer.slice(nl + 1)
+          if (!line) continue
+          let evt: { type?: string; text?: string; error?: string } & Record<string, unknown>
+          try {
+            evt = JSON.parse(line) as typeof evt
+          } catch {
+            continue
+          }
+          if (evt.type === 'delta' && typeof evt.text === 'string') {
+            streamed += evt.text
+            setChatMessages((prev) =>
+              prev.map((m) => (m.id === assistantMessageId ? { ...m, content: streamed } : m))
+            )
+            queueScrollDuringStream()
+          } else if (evt.type === 'error') {
+            streamError = typeof evt.error === 'string' ? evt.error : 'Er ging iets mis'
+          } else if (evt.type === 'done') {
+            completed = true
+            const { type: _t, ...rest } = evt as { type: string } & AskResponse
+            applyAssistantAnswer(assistantMessageId, rest as AskResponse)
+          }
+        }
+      }
+
+      if (streamError) {
+        setError(streamError)
+        setChatMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMessageId ? { ...msg, content: streamError!, isError: true } : msg
+          )
+        )
+        return
+      }
+      if (!completed) {
+        const errMessage = 'Antwoord onvolledig'
+        setError(errMessage)
+        setChatMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMessageId ? { ...msg, content: errMessage, isError: true } : msg
+          )
+        )
+      }
     } catch {
       const errMessage = 'Netwerkfout'
       setError(errMessage)
@@ -412,41 +444,6 @@ export default function ContractAskClient() {
     await submitQuestion(suggestedQuestion)
   }
 
-  async function handleFaqClusterClick(clusterId: string) {
-    if (loading) return
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await fetch(`/api/ai/ask/faq/${encodeURIComponent(clusterId)}`)
-      const data = await res.json()
-      if (!res.ok) {
-        setError(typeof data.error === 'string' ? data.error : 'Kon opgeslagen antwoord niet laden')
-        return
-      }
-      const questionText = typeof data.questionText === 'string' ? data.questionText : ''
-      const response = data.response as AskResponse | undefined
-      if (!response || typeof response.answer !== 'string') {
-        setError('Ongeldig opgeslagen antwoord')
-        return
-      }
-      const ts = Date.now()
-      setChatMessages((prev) => [
-        ...prev,
-        { id: `user-faq-${ts}`, role: 'user', content: questionText },
-        {
-          id: `assistant-faq-${ts}`,
-          role: 'assistant',
-          content: response.answer,
-          response,
-        },
-      ])
-    } catch {
-      setError('Netwerkfout bij laden FAQ-antwoord')
-    } finally {
-      setLoading(false)
-    }
-  }
-
   function sanitizeAssistantHtml(html: string) {
     return DOMPurify.sanitize(html, {
       ALLOWED_TAGS: [
@@ -467,6 +464,7 @@ export default function ContractAskClient() {
         'pre',
         'a',
         'table',
+        'caption',
         'thead',
         'tbody',
         'tr',
@@ -477,8 +475,20 @@ export default function ContractAskClient() {
     })
   }
 
+  /** Ruwe HTML-stream of opgeslagen HTML-antwoorden herkennen (legacy markdown blijft mogelijk). */
   function contentLooksLikeHtml(content: string) {
-    return /<\/?[a-z][\s\S]*>/i.test(content)
+    const t = content.trimStart()
+    if (!t.startsWith('<')) return false
+    return /^<\/?[a-z][a-z0-9]*\b/i.test(t)
+  }
+
+  function stripHtmlToPlainText(html: string) {
+    if (typeof document === 'undefined') {
+      return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+    }
+    const d = document.createElement('div')
+    d.innerHTML = sanitizeAssistantHtml(html)
+    return (d.textContent ?? d.innerText ?? '').replace(/\s+/g, ' ').trim()
   }
 
   const assistantContentClassName =
@@ -486,7 +496,11 @@ export default function ContractAskClient() {
 
   async function handleCopyMessage(message: ChatMessage) {
     try {
-      await navigator.clipboard.writeText(message.content)
+      const text =
+        message.role === 'assistant' && contentLooksLikeHtml(message.content)
+          ? stripHtmlToPlainText(message.content)
+          : message.content
+      await navigator.clipboard.writeText(text)
       setCopiedMessageId(message.id)
       setTimeout(() => setCopiedMessageId((prev) => (prev === message.id ? null : prev)), 1500)
     } catch {
@@ -495,18 +509,35 @@ export default function ContractAskClient() {
   }
 
   const bronnenSummary = useMemo(() => {
+    if (selectedContractIds.length === 1) {
+      const c = contracts.find((x) => x.id === selectedContractIds[0])
+      return c ? `Alleen dit contract: ${c.title}` : '1 contract geselecteerd'
+    }
+    if (selectedContractIds.length > 1) {
+      return `${selectedContractIds.length} contracten (alleen deze dossiers)`
+    }
     if (scopeMode === 'project' && selectedScopeProject && selectedContractIds.length === 0) {
       return `Heel project: ${selectedScopeProject.name}`
     }
-    if (selectedContractIds.length === 1) {
-      const c = contracts.find((x) => x.id === selectedContractIds[0])
-      return c ? `Alleen: ${c.title}` : '1 contract geselecteerd'
+    if (listFilterProjectId === LIST_FILTER_UNASSIGNED) {
+      return 'Alleen contracten zonder project (portfolio binnen deze groep)'
     }
-    if (selectedContractIds.length > 1) {
-      return `Alleen: ${selectedContractIds.length} contracten (max. ${MAX_SELECTED_CONTRACTS})`
+    if (listFilterProjectId) {
+      const fromOpts = projectFilterOptions.opts.find((o) => o.id === listFilterProjectId)?.label
+      const fromProject = projects.find((p) => p.id === listFilterProjectId)?.name
+      const label = fromOpts ?? fromProject ?? 'dit project'
+      return `Binnen project: ${label} (max. ${MAX_SELECTED_CONTRACTS} meest relevante dossiers)`
     }
-    return 'Geen dossierkeuze — brede zoekslag over alle contracten'
-  }, [scopeMode, selectedScopeProject, selectedContractIds, contracts])
+    return 'Alle contracten — brede zoekslag over de organisatie'
+  }, [
+    scopeMode,
+    selectedScopeProject,
+    selectedContractIds,
+    contracts,
+    listFilterProjectId,
+    projectFilterOptions,
+    projects,
+  ])
 
   function toggleContractSelection(contractId: string) {
     setScopeMode('org')
@@ -545,40 +576,79 @@ export default function ContractAskClient() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-zinc-900 sm:text-2xl">Contractagent</h1>
           <p className="mt-0.5 max-w-xl text-sm text-zinc-500">
-            Zonder gekozen contract(en) zoekt de agent breed; met selectie alleen in die dossiers (meerdere mogelijk, tot{' '}
-            {MAX_SELECTED_CONTRACTS}).
+            Vink contracten aan voor precies die dossiers (meerdere mogelijk, tot {MAX_SELECTED_CONTRACTS}). Kies een
+            projectrij voor zoeken binnen dat project, of <span className="font-medium text-zinc-600">Alle</span> voor
+            de hele organisatie. U kunt bronnen tussendoor aanpassen: elk nieuw bericht gebruikt de actuele keuze.
           </p>
         </div>
         <div className="mt-2 flex items-center gap-2 text-xs text-zinc-400 sm:mt-0">
           <MessageSquare className="h-3.5 w-3.5" aria-hidden />
-          <span className="hidden sm:inline">Eén doorlopend gesprek</span>
-          <span className="sm:hidden">Antwoord rechts</span>
+          <span className="hidden sm:inline">Eén doorlopend gesprek — typ onderaan, antwoorden verschijnen hierboven</span>
+          <span className="sm:hidden">Gesprek met invoer onderaan</span>
         </div>
       </header>
 
-      {/* Inklapbare bronkeuze — standaard één regel, chat krijgt de ruimte */}
-      <section id="contractagent-bronnen-hub" className="mt-2 shrink-0" aria-label="Bronnen kiezen">
-        <details className="group rounded-lg border border-zinc-200/90 bg-white shadow-sm">
-          <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-2 text-left marker:content-none [&::-webkit-details-marker]:hidden">
-            <ChevronDown
-              className="h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform group-open:rotate-180"
-              aria-hidden
-            />
-            <div className="min-w-0 flex-1">
-              <span className="text-[11px] font-semibold text-zinc-800">Bronnen</span>
-              <span className="mt-0.5 block truncate text-[10px] leading-snug text-zinc-500">{bronnenSummary}</span>
-            </div>
-          </summary>
-          <div className="border-t border-zinc-100 px-2 pb-2 pt-1">
-            <div id="contractagent-project-strip" className="flex flex-wrap items-center gap-1.5">
+      <div
+        className={cn(
+          'mt-3 flex min-h-0 flex-1 flex-col gap-3 overflow-hidden',
+          /* Grid + minmax(0,1fr): betrouwbare scroll in kinderen (flex min-height:auto breekt dit snel) */
+          'lg:grid lg:grid-cols-[12.5rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] lg:items-stretch lg:gap-4'
+        )}
+      >
+        {/* Bronnen: smalle kolom links; desktop = vaste breedte, hoogte = rij, scroll binnen paneel */}
+        <aside
+          id="contractagent-bronnen-hub"
+          className={cn(
+            'flex min-h-0 w-full shrink-0 flex-col overflow-hidden',
+            /* Vaste hoogte op mobiel: anders groeit het paneel mee en scrollt er niets */
+            'h-[min(52vh,420px)] max-h-[min(52vh,420px)] lg:h-full lg:max-h-none',
+            'lg:min-h-0 lg:w-[12.5rem] lg:min-w-[12rem] lg:max-w-[13rem]'
+          )}
+          aria-label="Bronnen kiezen"
+        >
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-zinc-200/90 bg-white shadow-sm">
+            <button
+              type="button"
+              className="flex w-full shrink-0 cursor-pointer items-center gap-2 px-2.5 py-2 text-left"
+              onClick={() => setBronnenDetailsOpen((o) => !o)}
+              aria-expanded={bronnenDetailsOpen}
+            >
+              <ChevronDown
+                className={cn(
+                  'h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform',
+                  bronnenDetailsOpen && 'rotate-180'
+                )}
+                aria-hidden
+              />
+              <div className="min-w-0 flex-1">
+                <span className="text-[11px] font-semibold text-zinc-800">Bronnen</span>
+                <span className="mt-0.5 block truncate text-[10px] leading-snug text-zinc-500">{bronnenSummary}</span>
+              </div>
+            </button>
+            {bronnenDetailsOpen ? (
+          <div
+            className={cn(
+              'flex min-h-0 flex-1 basis-0 flex-col overflow-hidden border-t border-zinc-100',
+              /* basis-0 + flex-1: neem resthoogte onder de kop, zodat overflow-y-auto kan scrollen */
+            )}
+          >
+          <div
+            className={cn(
+              'min-h-0 flex-1 basis-0 overflow-y-auto overflow-x-hidden overscroll-contain px-2 pb-2 pt-1',
+              '[scrollbar-gutter:stable] [scrollbar-width:thin]',
+              '[&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300/90'
+            )}
+          >
+            <div id="contractagent-project-strip" className="flex flex-col gap-1">
               <span className="text-[9px] font-bold uppercase tracking-wide text-blue-700">Project</span>
+              <div className="flex flex-col gap-1">
               {listFilterProjectId && listFilterProjectId !== LIST_FILTER_UNASSIGNED ? (
                 <Button
                   type="button"
                   disabled={loading}
                   size="sm"
                   variant="secondary"
-                  className="h-6 rounded-md px-2 text-[10px] font-semibold"
+                  className="h-7 w-full justify-center rounded-md px-2 text-[10px] font-semibold"
                   onClick={() => {
                     setScopeMode('project')
                     setSelectedScopeProjectId(listFilterProjectId)
@@ -594,18 +664,15 @@ export default function ContractAskClient() {
                   variant="ghost"
                   size="sm"
                   disabled={loading}
-                  className="h-6 px-2 text-[10px] text-zinc-600"
+                  className="h-7 w-full justify-center px-2 text-[10px] text-zinc-600"
                   onClick={() => setSelectedContractIds([])}
                 >
                   Wis contractkeuze
                 </Button>
               ) : null}
+              </div>
             </div>
-            <div
-              className="mt-1 flex gap-1.5 overflow-x-auto overscroll-x-contain pb-0.5 pt-0.5 [scrollbar-width:thin]"
-              style={{ WebkitOverflowScrolling: 'touch' }}
-              role="list"
-            >
+            <div className="mt-1.5 flex flex-col gap-1" role="list">
               <button
                 type="button"
                 disabled={loading}
@@ -617,7 +684,7 @@ export default function ContractAskClient() {
                 }}
                 role="listitem"
                 className={cn(
-                  'flex w-[min(8.5rem,calc(100vw-6rem))] shrink-0 items-center gap-1.5 rounded-md border px-1.5 py-1 text-left text-[10px] transition-colors',
+                  'flex w-full shrink-0 items-center gap-1.5 rounded-md border px-1.5 py-1.5 text-left text-[10px] transition-colors',
                   listFilterProjectId === ''
                     ? 'border-zinc-900 bg-zinc-900 text-white'
                     : 'border-zinc-200 bg-zinc-50/80 text-zinc-900 hover:border-zinc-300'
@@ -652,7 +719,7 @@ export default function ContractAskClient() {
                     }}
                     role="listitem"
                     className={cn(
-                      'flex w-[min(8.5rem,calc(100vw-6rem))] shrink-0 items-center gap-1.5 rounded-md border px-1.5 py-1 text-left text-[10px] transition-colors',
+                      'flex w-full shrink-0 items-center gap-1.5 rounded-md border px-1.5 py-1.5 text-left text-[10px] transition-colors',
                       active
                         ? 'border-zinc-900 bg-zinc-900 text-white'
                         : 'border-zinc-200 bg-white text-zinc-900 hover:border-zinc-300'
@@ -684,7 +751,7 @@ export default function ContractAskClient() {
                   }}
                   role="listitem"
                   className={cn(
-                    'flex w-[min(8.5rem,calc(100vw-6rem))] shrink-0 items-center gap-1.5 rounded-md border border-dashed px-1.5 py-1 text-left text-[10px] transition-colors',
+                    'flex w-full shrink-0 items-center gap-1.5 rounded-md border border-dashed px-1.5 py-1.5 text-left text-[10px] transition-colors',
                     listFilterProjectId === LIST_FILTER_UNASSIGNED
                       ? 'border-zinc-900 bg-zinc-900 text-white'
                       : 'border-zinc-200 bg-zinc-50 text-zinc-800 hover:border-zinc-300'
@@ -715,29 +782,23 @@ export default function ContractAskClient() {
               ) : null}
             </div>
 
-            <div id="contractagent-contract-strip" className="mt-1.5 border-t border-zinc-50 pt-1.5">
-              <div className="flex flex-wrap items-center gap-1.5">
+            <div id="contractagent-contract-strip" className="mt-2 border-t border-zinc-100 pt-2">
+              <div className="flex flex-col gap-1">
                 <span className="text-[9px] font-bold uppercase tracking-wide text-blue-700">Contract</span>
-                <span className="text-[9px] text-zinc-400">klik om aan/uit · max. {MAX_SELECTED_CONTRACTS}</span>
-                <div className="ml-auto w-full min-w-[8rem] max-w-[14rem] sm:w-44">
-                  <Label htmlFor="contract-search" className="sr-only">
-                    Zoek contract
-                  </Label>
-                  <Input
-                    id="contract-search"
-                    placeholder="Zoeken…"
-                    value={contractSearch}
-                    onChange={(e) => setContractSearch(e.target.value)}
-                    disabled={loading}
-                    className="h-7 rounded-md border-zinc-200 text-[11px]"
-                  />
-                </div>
+                <span className="text-[9px] leading-tight text-zinc-400">Aan/uit · max. {MAX_SELECTED_CONTRACTS}</span>
+                <Label htmlFor="contract-search" className="sr-only">
+                  Zoek contract
+                </Label>
+                <Input
+                  id="contract-search"
+                  placeholder="Zoeken…"
+                  value={contractSearch}
+                  onChange={(e) => setContractSearch(e.target.value)}
+                  disabled={loading}
+                  className="h-7 w-full rounded-md border-zinc-200 text-[11px]"
+                />
               </div>
-              <div
-                className="mt-1 flex max-h-[5rem] gap-1.5 overflow-x-auto overflow-y-hidden overscroll-x-contain pb-0.5 [scrollbar-width:thin]"
-                style={{ WebkitOverflowScrolling: 'touch' }}
-                role="list"
-              >
+              <div className="mt-1.5 flex flex-col gap-1 pb-0.5" role="list">
                 {contracts.length === 0 ? (
                   <p className="w-full rounded border border-zinc-200 bg-zinc-50/80 px-2 py-1.5 text-[10px] text-zinc-600" role="status">
                     Geen contracten —{' '}
@@ -771,7 +832,7 @@ export default function ContractAskClient() {
                         aria-pressed={contractSelected}
                         onClick={() => toggleContractSelection(c.id)}
                         className={cn(
-                          'relative flex w-[min(9rem,calc(100vw-6rem))] shrink-0 flex-col rounded-md border px-1.5 py-1 text-left text-[10px] transition-all sm:w-[9.5rem]',
+                          'relative flex w-full shrink-0 flex-col rounded-md border px-1.5 py-1.5 text-left text-[10px] transition-all',
                           contractSelected
                             ? 'border-blue-600 bg-blue-600 text-white shadow-sm'
                             : 'border-zinc-200 bg-white hover:border-zinc-300',
@@ -846,182 +907,23 @@ export default function ContractAskClient() {
               </div>
             </div>
           </div>
-        </details>
-      </section>
-
-      {/* Vraag (groot) naast antwoord */}
-      <div className="mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-hidden lg:flex-row lg:items-stretch lg:gap-6">
-        <div
-          className={cn(
-            'flex min-h-0 w-full min-w-0 flex-col gap-3',
-            'lg:h-full lg:min-h-0 lg:max-w-[min(100%,520px)] lg:flex-1 lg:shrink-0 lg:overflow-y-auto lg:overscroll-contain xl:max-w-[560px]'
-          )}
-          aria-label="Uw vraag"
-        >
-          <form
-            onSubmit={handleSubmit}
-            className="flex min-h-0 flex-1 flex-col rounded-2xl border border-zinc-200/90 bg-white p-4 shadow-sm ring-1 ring-zinc-100/80 sm:p-5"
-          >
-            <p className="shrink-0 text-xs font-medium uppercase tracking-wider text-zinc-400">Uw vraag</p>
-            <details className="mt-2 shrink-0 rounded-xl border border-zinc-100 bg-zinc-50/80 px-3 py-2 text-left">
-              <summary className="cursor-pointer select-none text-xs font-medium text-zinc-500 outline-none [&::-webkit-details-marker]:hidden">
-                <span className="inline-flex items-center gap-1.5">
-                  <Link2 className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
-                  Referentie-URL&apos;s (optioneel)
-                </span>
-              </summary>
-              <Label htmlFor="urls" className="sr-only">
-                Extra referentie-URL&apos;s
-              </Label>
-              <Textarea
-                id="urls"
-                placeholder={'Eén URL per regel\nhttps://…'}
-                value={referenceUrls}
-                onChange={(e) => setReferenceUrls(e.target.value)}
-                className="mt-2 min-h-[56px] resize-y border-zinc-200 bg-white font-mono text-xs"
-                disabled={loading}
-              />
-            </details>
-
-            <div className="mt-3 flex min-h-0 flex-1 flex-col gap-2 rounded-2xl border border-zinc-200/90 bg-zinc-50/40 p-2 focus-within:border-zinc-300 focus-within:ring-2 focus-within:ring-zinc-200/80 sm:p-3">
-              <Textarea
-                id="chat-input"
-                placeholder="Stel uw vraag over de contracten…"
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                onKeyDown={handleQuestionKeyDown}
-                rows={14}
-                disabled={loading}
-                className="min-h-[min(42vh,22rem)] w-full flex-1 resize-y border-0 bg-transparent px-2 py-2 text-[15px] leading-relaxed text-zinc-900 shadow-none placeholder:text-zinc-400 focus-visible:ring-0 focus-visible:ring-offset-0 lg:min-h-[min(52vh,28rem)]"
-              />
-              <div className="flex shrink-0 items-center justify-between gap-2 border-t border-zinc-200/80 pt-2">
-                <p className="text-[11px] text-zinc-400">
-                  Enter verstuurt · Shift+Enter nieuwe regel
-                </p>
-                <Button
-                  type="submit"
-                  size="default"
-                  disabled={!canSubmit}
-                  className="rounded-xl gap-2"
-                  aria-label={loading ? 'Bezig…' : 'Verstuur vraag'}
-                >
-                  {loading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                  ) : (
-                    <Send className="h-4 w-4" aria-hidden />
-                  )}
-                  Verstuur
-                </Button>
-              </div>
-            </div>
-            {!loading && question.trim() && scopeMode === 'project' && !selectedScopeProjectId ? (
-              <p className="mt-2 text-center text-xs text-amber-800/90" role="status">
-                {projects.length === 0 ? (
-                  <>
-                    Geen projecten.{' '}
-                    <Link href="/projects" className="underline">
-                      Projecten
-                    </Link>
-                  </>
-                ) : (
-                  <>Open bronnen hierboven en kies &quot;Heel dit project&quot; of een contract.</>
-                )}
-              </p>
-            ) : null}
-          </form>
-
-          <details className="group shrink-0 rounded-2xl border border-dashed border-zinc-200/90 bg-zinc-50/50 px-4 py-3 text-sm text-zinc-600 open:border-zinc-300 open:bg-white">
-            <summary className="cursor-pointer list-none font-medium text-zinc-700 outline-none marker:content-none [&::-webkit-details-marker]:hidden">
-              <span className="inline-flex items-center gap-2">
-                <span className="text-zinc-400 transition-transform group-open:rotate-90">▸</span>
-                Aan de slag
-              </span>
-            </summary>
-            <ol className="mt-3 list-decimal space-y-2 pl-5 text-xs leading-relaxed text-zinc-600 sm:text-sm">
-              <li>
-                Vouw <span className="font-medium">Bronnen</span> open: filter project, kies één of meerdere contracten, of
-                &quot;Heel dit project&quot;. Zonder contractkeuze is de zoekslag breed.
-              </li>
-              <li>
-                Maak projecten aan onder{' '}
-                <Link href="/projects" className="font-medium text-zinc-800 underline-offset-2 hover:underline">
-                  Projecten
-                </Link>{' '}
-                en voeg PDF/DOCX toe bij{' '}
-                <Link href="/contracts" className="font-medium text-zinc-800 underline-offset-2 hover:underline">
-                  Contracten
-                </Link>
-                .
-              </li>
-            </ol>
-          </details>
-        </div>
-
-        <div className="flex min-h-[min(44dvh,440px)] min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-zinc-50/90 shadow-[0_1px_0_rgba(0,0,0,0.04)] lg:min-h-0">
-        <div className="shrink-0 border-b border-zinc-200/80 bg-white/90 px-3 py-2 sm:px-4">
-          <p className="text-[11px] text-zinc-500">
-            Bronnen wijzigen?{' '}
-            <button
-              type="button"
-              className="font-medium text-blue-700 underline-offset-2 hover:underline"
-              onClick={() => document.getElementById('contractagent-bronnen-hub')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-            >
-              Naar boven
-            </button>
-          </p>
-        </div>
-        {faqClusters.length > 0 ? (
-          <div className="shrink-0 space-y-2 border-b border-zinc-200/80 bg-white/60 px-4 py-3 sm:px-5">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">Vaak gevraagd</p>
-            <p className="text-xs text-zinc-500">
-              Tik voor een eerder opgeslagen antwoord (zonder nieuwe AI-rondgang).
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {faqClusters.map((c) => (
-                <Button
-                  key={c.id}
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  disabled={loading}
-                  className="h-auto max-w-full rounded-full border-0 bg-zinc-100/90 px-3 py-1.5 text-left text-xs font-normal text-zinc-800 hover:bg-zinc-200/90 sm:text-sm"
-                  onClick={() => handleFaqClusterClick(c.id)}
-                >
-                  <span className="line-clamp-2">{c.label}</span>
-                  {c.askCount > 1 ? (
-                    <Badge variant="outline" className="ml-2 shrink-0 border-zinc-200 text-[10px] text-zinc-600">
-                      ×{c.askCount}
-                    </Badge>
-                  ) : null}
-                </Button>
-              ))}
-            </div>
           </div>
-        ) : null}
+            ) : null}
+          </div>
+        </aside>
 
+        {/* Alleen gesprek + invoer (geen extra koppen of FAQ) */}
+        <div
+          className="flex min-h-[min(58dvh,560px)] min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm lg:min-h-0"
+          aria-label="Gesprek"
+        >
         <div
           ref={chatScrollRef}
-          className="min-h-0 flex-1 space-y-6 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-6 [scrollbar-gutter:stable] sm:px-6"
+          className="min-h-0 flex-1 space-y-6 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-5 [scrollbar-gutter:stable] sm:px-6"
         >
           {error ? (
             <div className="rounded-xl border border-red-200/80 bg-red-50/90 px-4 py-3 text-sm text-red-900">{error}</div>
           ) : null}
-
-          {chatMessages.length === 0 && (
-            <div className="flex min-h-[180px] flex-col items-center justify-center gap-3 px-2 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-zinc-200/80">
-                <Bot className="h-6 w-6 text-zinc-500" aria-hidden />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-zinc-800">Waar kan ik u mee helpen?</p>
-                <p className="mt-1 max-w-sm text-sm leading-relaxed text-zinc-500">
-                  <span className="lg:hidden">Typ uw vraag in het grote veld hierboven. </span>
-                  <span className="hidden lg:inline">Typ uw vraag in het veld links van dit antwoord. </span>
-                  Antwoorden bevatten bronvermelding en kunnen vervolgsuggesties tonen.
-                </p>
-              </div>
-            </div>
-          )}
 
           {chatMessages.map((message) => (
             <div
@@ -1043,9 +945,17 @@ export default function ContractAskClient() {
                       )
                 )}
               >
-                  {message.role === 'assistant' && !message.isError && message.response ? (
-                    contentLooksLikeHtml(message.content) ? (
-                      <div className={`${assistantContentClassName} [&_table]:overflow-hidden [&_table]:rounded-lg`} dangerouslySetInnerHTML={{ __html: sanitizeAssistantHtml(message.content) }} />
+                  {message.role === 'assistant' && !message.isError ? (
+                    !message.content.trim() && loading ? (
+                      <div className="flex items-center gap-2 py-0.5 text-sm text-zinc-500">
+                        <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                        <span>Bezig met antwoord…</span>
+                      </div>
+                    ) : contentLooksLikeHtml(message.content) ? (
+                      <div
+                        className={`${assistantContentClassName} [&_table]:overflow-hidden [&_table]:rounded-lg`}
+                        dangerouslySetInnerHTML={{ __html: sanitizeAssistantHtml(message.content) }}
+                      />
                     ) : (
                       <div className={assistantContentClassName}>
                         <ReactMarkdown
@@ -1236,6 +1146,82 @@ export default function ContractAskClient() {
               </div>
             ))}
           </div>
+
+        <form
+          onSubmit={handleSubmit}
+          className="shrink-0 border-t border-zinc-200 bg-zinc-50/80 px-3 py-2 sm:px-4"
+        >
+          <div className="mx-auto max-w-3xl space-y-2">
+            <p className="text-[10px] leading-snug text-zinc-500">
+              <span className="text-zinc-400">Volgende bericht: </span>
+              <span className="font-medium text-zinc-700">{bronnenSummary}</span>
+            </p>
+            <details className="rounded-lg border border-transparent bg-transparent px-0 py-0 text-left [&_summary]:px-0">
+              <summary className="cursor-pointer select-none text-[10px] font-medium text-zinc-400 outline-none [&::-webkit-details-marker]:hidden hover:text-zinc-600">
+                <span className="inline-flex items-center gap-1">
+                  <Link2 className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                  URL&apos;s meesturen (optioneel)
+                </span>
+              </summary>
+              <Label htmlFor="urls" className="sr-only">
+                Extra referentie-URL&apos;s
+              </Label>
+              <Textarea
+                id="urls"
+                placeholder={'Eén URL per regel\nhttps://…'}
+                value={referenceUrls}
+                onChange={(e) => setReferenceUrls(e.target.value)}
+                className="mt-2 min-h-[44px] resize-y rounded-md border-zinc-200 bg-white font-mono text-xs"
+                disabled={loading}
+              />
+            </details>
+            <div className="flex flex-col gap-2 rounded-xl border border-zinc-200 bg-white p-2 shadow-[inset_0_1px_0_rgba(0,0,0,0.03)] focus-within:border-zinc-300 focus-within:ring-2 focus-within:ring-zinc-200/80 sm:p-2.5">
+              <Textarea
+                id="chat-input"
+                placeholder="Stel uw vraag over de contracten…"
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                onKeyDown={handleQuestionKeyDown}
+                rows={2}
+                disabled={loading}
+                className="max-h-28 min-h-[2.75rem] w-full resize-y border-0 bg-transparent px-2 py-1 text-[15px] leading-snug text-zinc-900 shadow-none placeholder:text-zinc-400 focus-visible:ring-0 focus-visible:ring-offset-0"
+              />
+              <div className="flex shrink-0 items-center justify-between gap-2 border-t border-zinc-200/70 pt-2">
+                <p className="text-[10px] text-zinc-400 sm:text-[11px]">
+                  Enter verstuurt · Shift+Enter nieuwe regel
+                </p>
+                <Button
+                  type="submit"
+                  size="default"
+                  disabled={!canSubmit}
+                  className="rounded-xl gap-2"
+                  aria-label={loading ? 'Bezig…' : 'Verstuur vraag'}
+                >
+                  {loading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  ) : (
+                    <Send className="h-4 w-4" aria-hidden />
+                  )}
+                  Verstuur
+                </Button>
+              </div>
+            </div>
+            {!loading && question.trim() && scopeMode === 'project' && !selectedScopeProjectId ? (
+              <p className="text-center text-[11px] text-amber-800/90" role="status">
+                {projects.length === 0 ? (
+                  <>
+                    Geen projecten.{' '}
+                    <Link href="/projects" className="underline">
+                      Projecten
+                    </Link>
+                  </>
+                ) : (
+                  <>Kies links bij bronnen &quot;Heel dit project&quot; of een contract.</>
+                )}
+              </p>
+            ) : null}
+          </div>
+        </form>
         </div>
       </div>
     </div>

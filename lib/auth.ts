@@ -3,7 +3,17 @@ import { db, users, organizations, organizationMembers, projects } from './db'
 import { and, eq } from 'drizzle-orm'
 import { roleRank } from './permissions'
 
-export type UserRole = 'admin' | 'registrator' | 'manager' | 'compliance' | 'reader'
+export type UserRole = 'super_admin' | 'admin' | 'registrator' | 'manager' | 'compliance' | 'reader'
+
+/** Geldige rollen (o.a. Clerk `publicMetadata.role`). */
+export const APP_USER_ROLES: UserRole[] = [
+  'super_admin',
+  'admin',
+  'manager',
+  'registrator',
+  'compliance',
+  'reader',
+]
 
 export interface AuthUser {
   id: string
@@ -74,7 +84,11 @@ export async function getOrCreateUser(): Promise<AuthUser | null> {
     where: eq(users.clerkId, clerkUser.id),
   })
 
-  const role = (clerkUser.publicMetadata?.role as UserRole) ?? 'reader'
+  const rawRole = clerkUser.publicMetadata?.role
+  const role: UserRole =
+    typeof rawRole === 'string' && APP_USER_ROLES.includes(rawRole as UserRole)
+      ? (rawRole as UserRole)
+      : 'reader'
   const name =
     (`${clerkUser.firstName ?? ''} ${clerkUser.lastName ?? ''}`.trim()) ||
     (clerkUser.emailAddresses[0]?.emailAddress ?? 'Gebruiker')

@@ -7,6 +7,7 @@ import { db, organizations } from '@/lib/db'
 import { eq } from 'drizzle-orm'
 import { redirect } from 'next/navigation'
 import { getOrgModuleVisibilityFromSettings, type OrgModuleVisibility } from '@/lib/org-modules'
+import { isOrgAdminRole } from '@/lib/permissions'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const user = await getOrCreateUser()
@@ -18,7 +19,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const baseVisibility = getOrgModuleVisibilityFromSettings(org?.settingsJson)
   const moduleVisibility: OrgModuleVisibility = {
     ...baseVisibility,
-    training: baseVisibility.training && user.role === 'admin',
+    training: baseVisibility.training && isOrgAdminRole(user.role),
   }
 
   return (

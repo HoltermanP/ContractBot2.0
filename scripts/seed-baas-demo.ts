@@ -1,9 +1,13 @@
 /**
  * Demodata: Baas B.V. (ondergrondse infra) — gemapt op Drizzle-schema.
- * Voegt organisatie, leveranciers (opdrachtgevers), projecten, contracten,
- * documenten en verplichtingen (clausules + mijlpalen) toe.
+ * Voegt organisatie, leveranciers, projecten, contracten, documenten (PDF),
+ * verplichtingen, notificatieregels, workflows, dashboardmeldingen, auditlog
+ * en aangepaste velden toe.
  *
  * Gebruik: npm run db:seed:baas
+ *
+ * Contract-PDF’s: met BLOB_READ_WRITE_TOKEN → upload naar Vercel Blob (private),
+ * pad `seed/baas-infra/docs/<contractnummer>/<docId>.pdf`. Zonder token: data-URL (alleen voor dev).
  *
  * Idempotent per contractnummer / projectcode (geen volledige DB-wipe).
  */
@@ -29,12 +33,31 @@ function logDbTarget(url: string) {
   }
 }
 
+import { put } from '@vercel/blob'
 import { neon } from '@neondatabase/serverless'
 import { drizzle } from 'drizzle-orm/neon-http'
 import { eq, and, or, sql } from 'drizzle-orm'
 import * as schema from '../lib/db/schema'
 import { buildBaasDemoDocumentPdfBuffer } from './seed-contract-pdf'
 import { BAAS_DEMO_DOC_BODIES } from './baas-demo-doc-bodies'
+
+function blobSafeSegment(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/_+/g, '_').slice(0, 180)
+}
+
+async function putBaasPdfBuffer(
+  token: string,
+  pathname: string,
+  buf: Buffer
+): Promise<{ url: string }> {
+  const created = await put(pathname, buf, {
+    access: 'private',
+    contentType: 'application/pdf',
+    token,
+    allowOverwrite: true,
+  })
+  return { url: created.url }
+}
 
 const DATABASE_URL = normalizeDatabaseUrl(process.env.DATABASE_URL)
 if (!DATABASE_URL) {
@@ -701,6 +724,9 @@ async function main() {
     console.log(`✓ Contract: ${dc.contractNumber}`)
   }
 
+  const blobToken = process.env.BLOB_READ_WRITE_TOKEN?.trim() || null
+  let baasBlobPdfCount = 0
+
   for (const d of DEMO_DOCS) {
     const contractId = contractIdByDemo.get(d.contractDemoId)
     if (!contractId) continue
@@ -730,7 +756,16 @@ async function main() {
       metaLines,
       sections,
     })
-    const dataUrl = `data:application/pdf;base64,${pdfBuf.toString('base64')}`
+
+    const blobPath = `seed/baas-infra/docs/${blobSafeSegment(dc.contractNumber)}/${blobSafeSegment(d.id)}.pdf`
+    let fileUrl: string
+    if (blobToken) {
+      const up = await putBaasPdfBuffer(blobToken, blobPath, pdfBuf)
+      fileUrl = up.url
+      baasBlobPdfCount++
+    } else {
+      fileUrl = `data:application/pdf;base64,${pdfBuf.toString('base64')}`
+    }
 
     const existing = await db.query.contractDocuments.findFirst({
       where: and(
@@ -751,6 +786,8 @@ async function main() {
       version: d.version,
       contractNumber: dc.contractNumber,
       principalDemoId: dc.principalDemoId,
+      pdfStorage: blobToken ? ('vercel_blob' as const) : ('data_url' as const),
+      blobPath: blobToken ? blobPath : undefined,
     }
 
     if (existing) {
@@ -758,7 +795,7 @@ async function main() {
         .update(schema.contractDocuments)
         .set({
           filename: safeName,
-          fileUrl: dataUrl,
+          fileUrl,
           fileType: 'application/pdf',
           fileSize: pdfBuf.length,
           documentKind: docKindFromType(d.documentType),
@@ -772,7 +809,7 @@ async function main() {
     await db.insert(schema.contractDocuments).values({
       contractId,
       filename: safeName,
-      fileUrl: dataUrl,
+      fileUrl,
       fileType: 'application/pdf',
       fileSize: pdfBuf.length,
       versionNumber: parseInt(d.version.split('.')[0], 10) || 1,
@@ -783,6 +820,13 @@ async function main() {
       aiProcessed: true,
       aiExtractedDataJson,
     })
+  }
+  if (baasBlobPdfCount > 0) {
+    console.log(`✓ ${baasBlobPdfCount} Baas-contract-PDF’s op Vercel Blob (private, seed/baas-infra/docs/…)`)
+  } else {
+    console.warn(
+      '⚠ Geen BLOB_READ_WRITE_TOKEN — PDF’s als data-URL in de DB. Voor Blob: zet token in .env.local en seed opnieuw.'
+    )
   }
   console.log(`✓ Contractdocumenten met inhoud (PDF) gezet of bijgewerkt`)
 
@@ -828,6 +872,200 @@ async function main() {
     })
   }
   console.log(`✓ Clausules + mijlpalen als verplichtingen toegevoegd`)
+
+  const demoEmail = 'contractbeheer.demo@baasbv.nl'
+
+  const notifSeed: Array<{
+    demoId: string
+    triggerType: 'days_before_end' | 'days_before_option' | 'obligation_due' | 'budget_threshold'
+    triggerValue: number
+    recipients: string[]
+  }> = [
+    { demoId: 'ct_stedin_buurt_2026', triggerType: 'days_before_end', triggerValue: 365, recipients: [demoEmail] },
+    { demoId: 'ct_stedin_buurt_2026', triggerType: 'days_before_end', triggerValue: 90, recipients: [demoEmail] },
+    { demoId: 'ct_combi_brabant', triggerType: 'days_before_end', triggerValue: 120, recipients: [demoEmail] },
+    { demoId: 'ct_grondg_no_nl', triggerType: 'days_before_end', triggerValue: 180, recipients: [demoEmail] },
+    { demoId: 'ct_structin_mw', triggerType: 'days_before_option', triggerValue: 180, recipients: [demoEmail] },
+    { demoId: 'ct_mdso', triggerType: 'days_before_end', triggerValue: 365, recipients: [demoEmail] },
+    { demoId: 'ct_odf_capelle', triggerType: 'days_before_end', triggerValue: 60, recipients: [demoEmail] },
+  ]
+
+  for (const n of notifSeed) {
+    const cid = contractIdByDemo.get(n.demoId)
+    if (!cid) continue
+    const dup = await db.query.notificationRules.findFirst({
+      where: and(
+        eq(schema.notificationRules.contractId, cid),
+        eq(schema.notificationRules.triggerType, n.triggerType),
+        eq(schema.notificationRules.triggerValue, n.triggerValue)
+      ),
+    })
+    if (dup) continue
+    await db.insert(schema.notificationRules).values({
+      contractId: cid,
+      triggerType: n.triggerType,
+      triggerValue: n.triggerValue,
+      recipientsJson: n.recipients as unknown as Record<string, unknown>[],
+      channel: 'both',
+      active: true,
+    })
+  }
+  console.log(`✓ Notificatieregels (Baas) toegevoegd waar nodig`)
+
+  const wfSeed: Array<{
+    demoId: string
+    workflowType: 'new_contract' | 'change' | 'renewal'
+    status: 'pending' | 'approved' | 'rejected'
+  }> = [
+    { demoId: 'ct_odf_capelle', workflowType: 'new_contract', status: 'pending' },
+    { demoId: 'ct_stedin_buurt_2026', workflowType: 'renewal', status: 'approved' },
+    { demoId: 'ct_combi_brabant', workflowType: 'change', status: 'rejected' },
+  ]
+
+  for (const w of wfSeed) {
+    const cid = contractIdByDemo.get(w.demoId)
+    if (!cid) continue
+    const dup = await db.query.approvalWorkflows.findFirst({
+      where: and(
+        eq(schema.approvalWorkflows.contractId, cid),
+        eq(schema.approvalWorkflows.workflowType, w.workflowType),
+        eq(schema.approvalWorkflows.status, w.status)
+      ),
+    })
+    if (dup) continue
+
+    const stepsJson =
+      w.status === 'approved'
+        ? [
+            {
+              approver: manager.name,
+              action: 'approved',
+              approvedAt: new Date(Date.now() - 10 * 86400000).toISOString(),
+              comment: 'Akkoord programmateam (demo)',
+            },
+          ]
+        : w.status === 'rejected'
+          ? [
+              {
+                approver: manager.name,
+                action: 'rejected',
+                rejectedAt: new Date(Date.now() - 5 * 86400000).toISOString(),
+                comment: 'Aanvullende scope-informatie nodig (demo)',
+              },
+            ]
+          : []
+
+    await db.insert(schema.approvalWorkflows).values({
+      contractId: cid,
+      workflowType: w.workflowType,
+      status: w.status,
+      stepsJson: stepsJson as unknown as Record<string, unknown>[],
+      currentStep: stepsJson.length,
+      createdBy: manager.id,
+      completedAt: w.status === 'pending' ? null : new Date(Date.now() - 5 * 86400000),
+    })
+  }
+  console.log(`✓ Goedkeuringsworkflows (Baas) toegevoegd waar nodig`)
+
+  const dashSeed: Array<{ demoId: string; title: string; message: string; type: string }> = [
+    {
+      demoId: 'ct_stedin_buurt_2026',
+      title: 'Buurtaanpak — KPI-review',
+      message: 'Eerste KPI-review gepland; controleer SLA-team en beschikbaarheid.',
+      type: 'warning',
+    },
+    {
+      demoId: 'ct_grondg_no_nl',
+      title: "GROND'G — tussenevaluatie",
+      message: 'Tussenevaluatie na 3 jaar voorbereiden; revisiedata NLCS/GIS controleren.',
+      type: 'info',
+    },
+    {
+      demoId: 'ct_odf_capelle',
+      title: 'ODF Capelle — fase mijlpaal',
+      message: 'Fase 1 oplevering naderen; bonusclausule en kwaliteitsgate activeren.',
+      type: 'warning',
+    },
+  ]
+
+  for (const dn of dashSeed) {
+    const cid = contractIdByDemo.get(dn.demoId)
+    if (!cid) continue
+    const dup = await db.query.dashboardNotifications.findFirst({
+      where: and(
+        eq(schema.dashboardNotifications.orgId, org.id),
+        eq(schema.dashboardNotifications.contractId, cid),
+        eq(schema.dashboardNotifications.title, dn.title)
+      ),
+    })
+    if (dup) continue
+    await db.insert(schema.dashboardNotifications).values({
+      orgId: org.id,
+      userId: manager.id,
+      contractId: cid,
+      title: dn.title,
+      message: dn.message,
+      type: dn.type,
+      read: false,
+    })
+  }
+  console.log(`✓ Dashboardmeldingen (Baas) toegevoegd waar nodig`)
+
+  const auditSeed: Array<{ demoId: string; action: string; daysAgo: number }> = [
+    { demoId: 'ct_grondg_no_nl', action: 'contract.aangemaakt', daysAgo: 520 },
+    { demoId: 'ct_stedin_buurt_2026', action: 'document.geupload', daysAgo: 14 },
+    { demoId: 'ct_odf_capelle', action: 'contract.bijgewerkt', daysAgo: 7 },
+  ]
+
+  for (const a of auditSeed) {
+    const cid = contractIdByDemo.get(a.demoId)
+    if (!cid) continue
+    const at = new Date(Date.now() - a.daysAgo * 86400000)
+    const dup = await db.query.auditLog.findFirst({
+      where: and(
+        eq(schema.auditLog.orgId, org.id),
+        eq(schema.auditLog.contractId, cid),
+        eq(schema.auditLog.action, a.action),
+        eq(schema.auditLog.userId, manager.id)
+      ),
+    })
+    if (dup) continue
+    await db.insert(schema.auditLog).values({
+      orgId: org.id,
+      contractId: cid,
+      userId: manager.id,
+      action: a.action,
+      createdAt: at,
+    })
+  }
+  console.log(`✓ Auditlog (Baas) toegevoegd waar nodig`)
+
+  const customSeed: Array<{
+    fieldName: string
+    fieldType: 'text' | 'number' | 'date' | 'select'
+    required: boolean
+    optionsJson?: string[]
+  }> = [
+    { fieldName: 'Werkgebiedcode', fieldType: 'text', required: false },
+    { fieldName: 'Programma (infra)', fieldType: 'select', required: false, optionsJson: ['Stedin', "GROND'G", 'Structin', 'MDSO', 'Combi Brabant', 'ODF', 'Overig'] },
+    { fieldName: 'CBS-indexering (clausule)', fieldType: 'text', required: false },
+    { fieldName: 'SCL-trede (veiligheid)', fieldType: 'select', required: false, optionsJson: ['2', '3', '4', '5', 'n.v.t.'] },
+  ]
+
+  for (const f of customSeed) {
+    const dup = await db.query.customFields.findFirst({
+      where: and(eq(schema.customFields.orgId, org.id), eq(schema.customFields.fieldName, f.fieldName)),
+    })
+    if (dup) continue
+    await db.insert(schema.customFields).values({
+      orgId: org.id,
+      fieldName: f.fieldName,
+      fieldType: f.fieldType,
+      optionsJson: f.optionsJson ?? null,
+      required: f.required,
+    })
+  }
+  console.log(`✓ Aangepaste velden (Baas) toegevoegd waar nodig`)
 
   console.log('\n✅ Baas-demodata klaar. Organisatieslug:', ORG_SLUG)
   console.log('   Zie je Baas niet in de org-schakelaar? Voeg lidmaatschap toe:')

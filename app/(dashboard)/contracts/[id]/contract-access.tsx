@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { toast } from '@/hooks/use-toast'
 import { Plus, Trash2, Loader2, Shield, Users, User } from 'lucide-react'
+import { isOrgAdminRole } from '@/lib/permissions'
 
 interface AccessRule {
   id: string
@@ -39,7 +40,7 @@ export function ContractAccess({ contract, currentUser, orgUsers }: {
   const [selectedRole, setSelectedRole] = useState('')
   const [accessType, setAccessType] = useState('allow')
 
-  const isAdmin = currentUser.role === 'admin'
+  const isAdmin = isOrgAdminRole(currentUser.role)
 
   useEffect(() => {
     fetch(`/api/contracts/${contract.id}/access`)
