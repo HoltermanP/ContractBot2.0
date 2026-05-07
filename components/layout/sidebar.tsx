@@ -10,6 +10,8 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import { UserButton } from '@clerk/nextjs'
 import type { OrgModuleKey, OrgModuleVisibility } from '@/lib/org-modules'
+import type { UserRole } from '@/lib/auth'
+import { canInviteUsers, canManageNotificationSettings, canManageOrgSettings } from '@/lib/permissions'
 
 type ModuleNavItem = {
   href: string
@@ -46,12 +48,26 @@ const settingsItems: Array<{ href: string; label: string; icon: LucideIcon; key:
   { href: '/settings/retention', label: 'Bewaartermijnen', icon: Settings, key: 'settingsRetention' },
 ]
 
-export function Sidebar({ moduleVisibility }: { moduleVisibility: OrgModuleVisibility }) {
+export function Sidebar({
+  moduleVisibility,
+  userRole,
+}: {
+  moduleVisibility: OrgModuleVisibility
+  userRole: UserRole
+}) {
   const pathname = usePathname()
   const visibleAgentItems = agentItems.filter((item) => moduleVisibility[item.key])
   const visibleNavItems = navItems.filter((item) => moduleVisibility[item.key])
   const visibleAiItems = aiItems.filter((item) => moduleVisibility[item.key])
-  const visibleSettingsItems = settingsItems.filter((item) => moduleVisibility[item.key])
+  const visibleSettingsItems = settingsItems.filter((item) => {
+    if (!moduleVisibility[item.key]) return false
+    if (item.key === 'settingsUsers') return canInviteUsers(userRole)
+    if (item.key === 'settingsNotifications') return canManageNotificationSettings(userRole)
+    if (item.key === 'settingsCustomFields' || item.key === 'settingsRetention') {
+      return canManageOrgSettings(userRole)
+    }
+    return true
+  })
   return (
     <aside className="fixed left-0 top-0 h-full w-64 bg-slate-900 text-white flex flex-col z-40">
       <div className="p-6 border-b border-slate-700">

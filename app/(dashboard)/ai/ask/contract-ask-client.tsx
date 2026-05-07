@@ -94,6 +94,9 @@ export default function ContractAskClient() {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
   /** Bronnen-accordion: standaard open (smalle linkerkolom). */
   const [bronnenDetailsOpen, setBronnenDetailsOpen] = useState(true)
+  /** Subsecties binnen bronnenmenu. */
+  const [projectsOpen, setProjectsOpen] = useState(true)
+  const [contractsOpen, setContractsOpen] = useState(true)
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
   const scrollStreamRaf = useRef<number | null>(null)
   const streamFlushRaf = useRef<number | null>(null)
@@ -679,8 +682,19 @@ export default function ContractAskClient() {
             )}
           >
             <div id="contractagent-project-strip" className="flex flex-col gap-1">
-              <span className="text-[9px] font-bold uppercase tracking-wide text-blue-700">Project</span>
-              <div className="flex flex-col gap-1">
+              <button
+                type="button"
+                className="flex items-center gap-1 text-left"
+                onClick={() => setProjectsOpen((o) => !o)}
+                aria-expanded={projectsOpen}
+              >
+                <ChevronDown
+                  className={cn('h-3 w-3 text-blue-700 transition-transform', projectsOpen ? 'rotate-180' : '')}
+                  aria-hidden
+                />
+                <span className="text-[9px] font-bold uppercase tracking-wide text-blue-700">Project</span>
+              </button>
+              {projectsOpen ? <div className="flex flex-col gap-1">
               {listFilterProjectId && listFilterProjectId !== LIST_FILTER_UNASSIGNED ? (
                 <Button
                   type="button"
@@ -709,9 +723,9 @@ export default function ContractAskClient() {
                   Wis contractkeuze
                 </Button>
               ) : null}
-              </div>
+              </div> : null}
             </div>
-            <div className="mt-1.5 flex flex-col gap-1" role="list">
+            {projectsOpen ? <div className="mt-1.5 flex flex-col gap-1" role="list">
               <button
                 type="button"
                 disabled={loading}
@@ -819,25 +833,40 @@ export default function ContractAskClient() {
                   </span>
                 </button>
               ) : null}
-            </div>
+            </div> : null}
 
             <div id="contractagent-contract-strip" className="mt-2 border-t border-zinc-100 pt-2">
               <div className="flex flex-col gap-1">
-                <span className="text-[9px] font-bold uppercase tracking-wide text-blue-700">Contract</span>
-                <span className="text-[9px] leading-tight text-zinc-400">Aan/uit · max. {MAX_SELECTED_CONTRACTS}</span>
-                <Label htmlFor="contract-search" className="sr-only">
-                  Zoek contract
-                </Label>
-                <Input
-                  id="contract-search"
-                  placeholder="Zoeken…"
-                  value={contractSearch}
-                  onChange={(e) => setContractSearch(e.target.value)}
-                  disabled={loading}
-                  className="h-7 w-full rounded-md border-zinc-200 text-[11px]"
-                />
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-left"
+                  onClick={() => setContractsOpen((o) => !o)}
+                  aria-expanded={contractsOpen}
+                >
+                  <ChevronDown
+                    className={cn('h-3 w-3 text-blue-700 transition-transform', contractsOpen ? 'rotate-180' : '')}
+                    aria-hidden
+                  />
+                  <span className="text-[9px] font-bold uppercase tracking-wide text-blue-700">Contract</span>
+                </button>
+                {contractsOpen ? (
+                  <>
+                    <span className="text-[9px] leading-tight text-zinc-400">Aan/uit · max. {MAX_SELECTED_CONTRACTS}</span>
+                    <Label htmlFor="contract-search" className="sr-only">
+                      Zoek contract
+                    </Label>
+                    <Input
+                      id="contract-search"
+                      placeholder="Zoeken…"
+                      value={contractSearch}
+                      onChange={(e) => setContractSearch(e.target.value)}
+                      disabled={loading}
+                      className="h-7 w-full rounded-md border-zinc-200 text-[11px]"
+                    />
+                  </>
+                ) : null}
               </div>
-              <div className="mt-1.5 flex flex-col gap-1 pb-0.5" role="list">
+              {contractsOpen ? <div className="mt-1.5 flex flex-col gap-1 pb-0.5" role="list">
                 {contracts.length === 0 ? (
                   <p className="w-full rounded border border-zinc-200 bg-zinc-50/80 px-2 py-1.5 text-[10px] text-zinc-600" role="status">
                     Geen contracten —{' '}
@@ -943,7 +972,7 @@ export default function ContractAskClient() {
                     )
                   })
                 )}
-              </div>
+              </div> : null}
             </div>
           </div>
           </div>

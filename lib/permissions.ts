@@ -69,6 +69,11 @@ export function canManageOrgSettings(role: UserRole): boolean {
   return isOrgAdminRole(role)
 }
 
+/** Notificatie-instellingen mogen ook door contractmanagers beheerd worden. */
+export function canManageNotificationSettings(role: UserRole): boolean {
+  return isOrgAdminRole(role) || role === 'manager'
+}
+
 export function canManageProjects(role: UserRole): boolean {
   return isOrgAdminRole(role) || role === 'manager'
 }

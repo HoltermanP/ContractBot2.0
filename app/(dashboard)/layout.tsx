@@ -23,7 +23,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <div className="flex min-h-screen bg-gray-50">
-      <Sidebar moduleVisibility={moduleVisibility} />
+      <Sidebar moduleVisibility={moduleVisibility} userRole={user.role} />
       <main className="flex-1 ml-64 p-8">
         <OrgRouteGuard moduleVisibility={moduleVisibility} />
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3 mb-6">

@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import Link from 'next/link'
-import { canManageOrgSettings } from '@/lib/permissions'
+import { canManageNotificationSettings } from '@/lib/permissions'
 import { requireOrgModule } from '@/lib/org-module-access'
 
 const TRIGGER_LABELS: Record<string, string> = {
@@ -17,7 +17,7 @@ const TRIGGER_LABELS: Record<string, string> = {
 
 export default async function NotificationsSettingsPage() {
   const user = await requireOrgModule('settingsNotifications')
-  if (!canManageOrgSettings(user.role)) redirect('/dashboard')
+  if (!canManageNotificationSettings(user.role)) redirect('/dashboard')
 
   const rules = await db.query.notificationRules.findMany()
 
