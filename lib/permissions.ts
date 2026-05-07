@@ -77,6 +77,11 @@ export function canManageUsers(role: UserRole): boolean {
   return isOrgAdminRole(role)
 }
 
+/** Gebruikers uitnodigen/toevoegen binnen eigen organisatie (admin + manager). */
+export function canInviteUsers(role: UserRole): boolean {
+  return isOrgAdminRole(role) || role === 'manager'
+}
+
 export function canManageSupplierWrite(role: UserRole): boolean {
   return canMutateContractData(role)
 }

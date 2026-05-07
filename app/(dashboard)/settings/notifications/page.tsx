@@ -19,9 +19,7 @@ export default async function NotificationsSettingsPage() {
   const user = await requireOrgModule('settingsNotifications')
   if (!canManageOrgSettings(user.role)) redirect('/dashboard')
 
-  const rules = await db.query.notificationRules.findMany({
-    with: { contractId: true } as any,
-  })
+  const rules = await db.query.notificationRules.findMany()
 
   const contractsList = await db.query.contracts.findMany({
     where: eq(contracts.orgId, user.orgId),

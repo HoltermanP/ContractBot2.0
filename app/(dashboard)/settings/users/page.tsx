@@ -2,7 +2,7 @@ import { db } from '@/lib/db'
 import { organizationMembers } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { redirect } from 'next/navigation'
-import { canManageUsers, canAssignSuperAdmin } from '@/lib/permissions'
+import { canManageUsers, canAssignSuperAdmin, canInviteUsers } from '@/lib/permissions'
 import { requireOrgModule } from '@/lib/org-module-access'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -12,9 +12,10 @@ import { InviteUserForm } from './invite-user-form'
 
 export default async function UsersPage() {
   const user = await requireOrgModule('settingsUsers')
-  if (!canManageUsers(user.role)) redirect('/dashboard')
+  if (!canInviteUsers(user.role)) redirect('/dashboard')
   if (!user.orgId) redirect('/dashboard')
 
+  const canEditRoles = canManageUsers(user.role)
   const allowSuperAdminInUi = canAssignSuperAdmin(user.role)
 
   const memberRows = await db.query.organizationMembers.findMany({
@@ -57,7 +58,7 @@ export default async function UsersPage() {
                   </td>
                   <td className="py-3 text-muted-foreground">{formatDate(u.createdAt)}</td>
                   <td className="py-3">
-                    {u.id !== user.id && (
+                    {u.id !== user.id && canEditRoles && (
                       <UserRoleEditor
                         userId={u.id}
                         currentRole={u.role}

@@ -1,14 +1,16 @@
 import { connection } from 'next/server'
 import { getOrCreateUser } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { contracts, contractObligations, approvalWorkflows, dashboardNotifications } from '@/lib/db/schema'
+import { contracts, dashboardNotifications } from '@/lib/db/schema'
 import { eq, and, lt, count } from 'drizzle-orm'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { formatDate, formatCurrency, daysUntil, getExpiryBadgeClass } from '@/lib/utils'
-import { FileText, AlertTriangle, CheckCircle, Clock, TrendingUp, Bot, Lightbulb, ShieldAlert, HelpCircle } from 'lucide-react'
+import { FileText, AlertTriangle, Clock, Bot, Lightbulb, ShieldAlert, HelpCircle } from 'lucide-react'
 import Link from 'next/link'
 import { DashboardChart } from './dashboard-chart'
+import { getOrgSettingsJsonForUser } from '@/lib/org-module-access'
+import { getEffectiveModuleVisibility } from '@/lib/org-modules'
 
 /** Altijd verse serverdata; geen statische of gedeeltelijke cache van dit segment. */
 export const dynamic = 'force-dynamic'
@@ -18,6 +20,8 @@ export default async function DashboardPage() {
   await connection()
   const user = await getOrCreateUser()
   if (!user) return null
+  const settingsJson = await getOrgSettingsJsonForUser(user.orgId)
+  const moduleVisibility = getEffectiveModuleVisibility(settingsJson, user.role)
 
   const now = new Date()
   const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
@@ -27,8 +31,6 @@ export default async function DashboardPage() {
     activeContracts,
     expiringIn30,
     expiringIn90,
-    openObligations,
-    pendingApprovals,
     recentContracts,
     contractsForChart,
     notifications,
@@ -39,16 +41,6 @@ export default async function DashboardPage() {
       .where(and(eq(contracts.orgId, user.orgId), eq(contracts.status, 'actief'), lt(contracts.endDate, in30Days))),
     db.select({ count: count() }).from(contracts)
       .where(and(eq(contracts.orgId, user.orgId), eq(contracts.status, 'actief'), lt(contracts.endDate, in90Days))),
-    db
-      .select({ count: count() })
-      .from(contractObligations)
-      .innerJoin(contracts, eq(contracts.id, contractObligations.contractId))
-      .where(and(eq(contracts.orgId, user.orgId), eq(contractObligations.status, 'open'))),
-    db
-      .select({ count: count() })
-      .from(approvalWorkflows)
-      .innerJoin(contracts, eq(contracts.id, approvalWorkflows.contractId))
-      .where(and(eq(contracts.orgId, user.orgId), eq(approvalWorkflows.status, 'pending'))),
     db.query.contracts.findMany({
       where: eq(contracts.orgId, user.orgId),
       orderBy: (c, { desc }) => [desc(c.updatedAt)],
@@ -97,22 +89,6 @@ export default async function DashboardPage() {
       color: 'text-orange-600',
       bg: 'bg-orange-50',
       href: '/contracts?status=actief&expiring=90',
-    },
-    {
-      title: 'Open verplichtingen',
-      value: openObligations[0]?.count ?? 0,
-      icon: CheckCircle,
-      color: 'text-purple-600',
-      bg: 'bg-purple-50',
-      href: '/contracts?focus=obligations',
-    },
-    {
-      title: 'Openstaande goedkeuringen',
-      value: pendingApprovals[0]?.count ?? 0,
-      icon: TrendingUp,
-      color: 'text-green-600',
-      bg: 'bg-green-50',
-      href: '/contracts?focus=approvals',
     },
   ] as const
 
@@ -169,36 +145,40 @@ export default async function DashboardPage() {
             </CardContent>
           </Card>
         </Link>
-        <Link href="/ai/insights" className="group block">
-          <Card className="h-full border-slate-200 hover:border-blue-300 hover:shadow-sm transition-all">
-            <CardContent className="pt-5">
-              <div className="flex items-start gap-3">
-                <div className="rounded-lg p-2 bg-amber-50 shrink-0">
-                  <Lightbulb className="h-5 w-5 text-amber-600" />
+        {moduleVisibility.aiInsights && (
+          <Link href="/ai/insights" className="group block">
+            <Card className="h-full border-slate-200 hover:border-blue-300 hover:shadow-sm transition-all">
+              <CardContent className="pt-5">
+                <div className="flex items-start gap-3">
+                  <div className="rounded-lg p-2 bg-amber-50 shrink-0">
+                    <Lightbulb className="h-5 w-5 text-amber-600" />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-sm text-slate-900 group-hover:text-blue-700">Praktijkpunten</div>
+                    <div className="text-xs text-muted-foreground mt-1">Belangrijkste contractpunten per project met uitgewerkte voorbeelden</div>
+                  </div>
                 </div>
-                <div>
-                  <div className="font-semibold text-sm text-slate-900 group-hover:text-blue-700">Praktijkpunten</div>
-                  <div className="text-xs text-muted-foreground mt-1">Belangrijkste contractpunten per project met uitgewerkte voorbeelden</div>
+              </CardContent>
+            </Card>
+          </Link>
+        )}
+        {moduleVisibility.aiIssues && (
+          <Link href="/ai/issues" className="group block">
+            <Card className="h-full border-slate-200 hover:border-blue-300 hover:shadow-sm transition-all">
+              <CardContent className="pt-5">
+                <div className="flex items-start gap-3">
+                  <div className="rounded-lg p-2 bg-red-50 shrink-0">
+                    <ShieldAlert className="h-5 w-5 text-red-600" />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-sm text-slate-900 group-hover:text-blue-700">Contractkwaliteit</div>
+                    <div className="text-xs text-muted-foreground mt-1">Onduidelijkheden, tegenstrijdigheden en vaagheden per contract</div>
+                  </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-        </Link>
-        <Link href="/ai/issues" className="group block">
-          <Card className="h-full border-slate-200 hover:border-blue-300 hover:shadow-sm transition-all">
-            <CardContent className="pt-5">
-              <div className="flex items-start gap-3">
-                <div className="rounded-lg p-2 bg-red-50 shrink-0">
-                  <ShieldAlert className="h-5 w-5 text-red-600" />
-                </div>
-                <div>
-                  <div className="font-semibold text-sm text-slate-900 group-hover:text-blue-700">Contractkwaliteit</div>
-                  <div className="text-xs text-muted-foreground mt-1">Onduidelijkheden, tegenstrijdigheden en vaagheden per contract</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </Link>
+              </CardContent>
+            </Card>
+          </Link>
+        )}
       </div>
 
       {/* KPI Cards */}

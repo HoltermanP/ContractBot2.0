@@ -8,6 +8,17 @@ import { canMutateContractData } from '@/lib/permissions'
 import { nextDocumentVersionNumber, refreshContractContentEmbedding } from '@/lib/contract-corpus'
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024 // 10 MB
+type BlobAccessMode = 'private' | 'public'
+
+function resolveBlobAccessMode(): BlobAccessMode {
+  const raw = process.env.BLOB_ACCESS?.trim().toLowerCase()
+  return raw === 'public' ? 'public' : 'private'
+}
+
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message
+  return String(err)
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -57,11 +68,32 @@ export async function POST(req: NextRequest) {
     }
 
     const blobPath = `contracts/${user.orgId}/${contractId}/${Date.now()}-${file.name}`
-    const blob = await put(blobPath, file, {
-      access: 'private',
-      token,
-      contentType: file.type || (ext === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
-    })
+    const contentType =
+      file.type || (ext === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    const configuredAccess = resolveBlobAccessMode()
+    let blob
+    try {
+      blob = await put(blobPath, file, {
+        access: configuredAccess,
+        token,
+        contentType,
+      })
+    } catch (blobErr: unknown) {
+      const blobMessage = getErrorMessage(blobErr)
+      const canRetryAsPublic =
+        configuredAccess === 'private' &&
+        (blobMessage.toLowerCase().includes('public') || blobMessage.toLowerCase().includes('access'))
+
+      if (canRetryAsPublic) {
+        blob = await put(blobPath, file, {
+          access: 'public',
+          token,
+          contentType,
+        })
+      } else {
+        throw new Error(`Blob upload mislukt: ${blobMessage}`)
+      }
+    }
 
     // Alleen bij een nieuw hoofdcontract het vorige hoofdcontract als niet-actueel markeren.
     // Extra contractstukken en addenda mogen naast elkaar actueel blijven (meerdere bestanden).
@@ -117,6 +149,17 @@ export async function POST(req: NextRequest) {
         {
           error:
             'Het documenttype wordt door de database nog niet herkend. Voer lokaal of op de server uit: npm run db:migrate (migratie met extra documenttype contractstuk).',
+        },
+        { status: 500 }
+      )
+    }
+    if (lower.includes('blob upload mislukt')) {
+      console.error('[documents/upload]', err)
+      return NextResponse.json(
+        {
+          error:
+            `${message}. Controleer in Vercel of de env var BLOB_READ_WRITE_TOKEN op deze environment staat en of access-mode klopt. ` +
+            `Optioneel: zet BLOB_ACCESS=public als je een public Blob store gebruikt.`,
         },
         { status: 500 }
       )

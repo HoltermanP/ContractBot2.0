@@ -4,7 +4,7 @@ import { db } from '@/lib/db'
 import { organizationMembers, users } from '@/lib/db/schema'
 import { and, eq } from 'drizzle-orm'
 import type { UserRole } from '@/lib/auth'
-import { canManageUsers } from '@/lib/permissions'
+import { canInviteUsers } from '@/lib/permissions'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ orgId: string }> }) {
   try {
@@ -12,7 +12,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ org
     const user = await getOrCreateUser()
     if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
     if (user.orgId !== orgId) return NextResponse.json({ error: 'Geen toegang' }, { status: 403 })
-    if (!canManageUsers(user.role)) return NextResponse.json({ error: 'Geen rechten' }, { status: 403 })
+    if (!canInviteUsers(user.role)) return NextResponse.json({ error: 'Geen rechten' }, { status: 403 })
 
     const rows = await db.query.organizationMembers.findMany({
       where: eq(organizationMembers.orgId, orgId),
@@ -42,7 +42,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ org
     const user = await getOrCreateUser()
     if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
     if (user.orgId !== orgId) return NextResponse.json({ error: 'Geen toegang' }, { status: 403 })
-    if (!canManageUsers(user.role)) return NextResponse.json({ error: 'Geen rechten' }, { status: 403 })
+    if (!canInviteUsers(user.role)) return NextResponse.json({ error: 'Geen rechten' }, { status: 403 })
 
     const body = await req.json()
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''

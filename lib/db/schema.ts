@@ -255,7 +255,7 @@ export const contractDocuments = pgTable('contract_documents', {
   contractId: text('contract_id').notNull().references(() => contracts.id, { onDelete: 'cascade' }),
   filename: varchar('filename', { length: 500 }).notNull(),
   fileUrl: text('file_url').notNull(),
-  fileType: varchar('file_type', { length: 50 }).notNull(),
+  fileType: text('file_type').notNull(),
   fileSize: integer('file_size').notNull(),
   versionNumber: integer('version_number').notNull().default(1),
   isCurrent: boolean('is_current').default(true),

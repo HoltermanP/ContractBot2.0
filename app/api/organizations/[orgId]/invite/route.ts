@@ -5,11 +5,23 @@ import { db } from '@/lib/db'
 import { organizationMembers, organizations, users } from '@/lib/db/schema'
 import { and, eq } from 'drizzle-orm'
 import type { UserRole } from '@/lib/auth'
-import { canAssignSuperAdmin, canManageUsers } from '@/lib/permissions'
+import { canAssignSuperAdmin, canInviteUsers } from '@/lib/permissions'
 
-function appBaseUrl() {
+function appBaseUrl(req: NextRequest) {
   const explicit = process.env.NEXT_PUBLIC_APP_URL?.trim()
-  if (explicit) return explicit.replace(/\/$/, '')
+  if (explicit) {
+    try {
+      const parsed = new URL(explicit)
+      const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1'
+      if (!(process.env.NODE_ENV === 'production' && isLocalhost)) {
+        return explicit.replace(/\/$/, '')
+      }
+    } catch {
+      // Onbruikbare URL in env: val terug op request-origin.
+    }
+  }
+  const origin = req.nextUrl.origin?.trim()
+  if (origin) return origin.replace(/\/$/, '')
   const vercel = process.env.VERCEL_URL?.trim()
   if (vercel) {
     const host = vercel.replace(/^https?:\/\//, '').replace(/\/$/, '')
@@ -43,7 +55,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ org
     const user = await getOrCreateUser()
     if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
     if (user.orgId !== orgId) return NextResponse.json({ error: 'Geen toegang' }, { status: 403 })
-    if (!canManageUsers(user.role)) return NextResponse.json({ error: 'Geen rechten' }, { status: 403 })
+    if (!canInviteUsers(user.role)) return NextResponse.json({ error: 'Geen rechten' }, { status: 403 })
 
     const orgExists = await db.query.organizations.findFirst({
       where: eq(organizations.id, orgId),
@@ -67,7 +79,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ org
       return NextResponse.json({ error: 'Alleen super-admin kan deze rol toekennen' }, { status: 403 })
     }
 
-    const baseUrl = appBaseUrl()
+    const baseUrl = appBaseUrl(req)
 
     const target = await db.query.users.findFirst({ where: eq(users.email, emailRaw) })
 
